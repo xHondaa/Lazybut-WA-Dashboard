@@ -139,65 +139,130 @@ export default function Dashboard() {
 
 function MessageThread({ orderNumber, phoneNumber }) {
     const [messages, setMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [sending, setSending] = useState(false);
 
     useEffect(() => {
         if (!orderNumber) return;
 
-        const q = query(
+        const qNum = query(
             collection(db, 'whatsappMessages'),
-            where('order_number', '==', orderNumber),
+            where('order_number', '==', Number(orderNumber)),
             orderBy('timestamp', 'asc')
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const qStr = query(
+            collection(db, 'whatsappMessages'),
+            where('order_number', '==', String(orderNumber)),
+            orderBy('timestamp', 'asc')
+        );
+
+        const unsubNum = onSnapshot(qNum, (snapshot) => {
             setMessages((prev) => {
                 let next = [...prev];
                 snapshot.docChanges().forEach((change) => {
                     const data = { id: change.doc.id, ...change.doc.data() };
                     if (change.type === 'added') {
-                        next.push(data);
+                        const exists = next.some(m => m.id === data.id);
+                        if (!exists) next.push(data);
                     } else if (change.type === 'modified') {
                         next = next.map((m) => (m.id === data.id ? data : m));
                     } else if (change.type === 'removed') {
                         next = next.filter((m) => m.id !== data.id);
                     }
                 });
-                return next;
+                return next.sort((a, b) => {
+                    const aTime = new Date(a.timestamp).getTime();
+                    const bTime = new Date(b.timestamp).getTime();
+                    return aTime - bTime;
+                });
             });
         });
 
-        return () => unsubscribe();
+        const unsubStr = onSnapshot(qStr, (snapshot) => {
+            setMessages((prev) => {
+                let next = [...prev];
+                snapshot.docChanges().forEach((change) => {
+                    const data = { id: change.doc.id, ...change.doc.data() };
+                    if (change.type === 'added') {
+                        const exists = next.some(m => m.id === data.id);
+                        if (!exists) next.push(data);
+                    } else if (change.type === 'modified') {
+                        next = next.map((m) => (m.id === data.id ? data : m));
+                    } else if (change.type === 'removed') {
+                        next = next.filter((m) => m.id !== data.id);
+                    }
+                });
+                return next.sort((a, b) => {
+                    const aTime = new Date(a.timestamp).getTime();
+                    const bTime = new Date(b.timestamp).getTime();
+                    return aTime - bTime;
+                });
+            });
+        });
+
+        return () => {
+            unsubNum();
+            unsubStr();
+        };
     }, [orderNumber]);
 
     const getMessageContent = (msg) => {
-        // Handle button clicks
         if (msg.message_type === 'button' && msg.button_title) {
             return `🔘 ${msg.button_title}`;
         }
 
-        // Handle template messages
         if (msg.message_type === 'template' && msg.template_name) {
             return `📋 Template: ${msg.template_name}`;
         }
 
-        // Handle regular text
         if (msg.text) {
             return msg.text;
         }
 
-        // Fallback
         return `[${msg.message_type || 'Unknown message type'}]`;
+    };
+
+    const handleSendMessage = async (e) => {
+        e.preventDefault();
+
+        if (!newMessage.trim() || sending) return;
+
+        setSending(true);
+
+        try {
+            const response = await fetch('/api/send-message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    phone: phoneNumber,
+                    message: newMessage,
+                    order_number: orderNumber
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to send message');
+            }
+
+            setNewMessage('');
+        } catch (error) {
+            console.error('Error sending message:', error);
+            alert('Failed to send message. Try again.');
+        } finally {
+            setSending(false);
+        }
     };
 
     return (
         <>
-            {/* Header */}
             <div className="p-4 bg-emerald-600 border-b border-emerald-700">
                 <div className="font-semibold text-white">{phoneNumber}</div>
                 <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
             </div>
 
-            {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
                 {messages.map((msg) => (
                     <div
@@ -228,6 +293,27 @@ function MessageThread({ orderNumber, phoneNumber }) {
                     </div>
                 ))}
             </div>
+
+            {/* Message input */}
+            <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-200">
+                <div className="flex gap-2">
+                    <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        placeholder="Type a message..."
+                        disabled={sending}
+                        className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-100"
+                    />
+                    <button
+                        type="submit"
+                        disabled={!newMessage.trim() || sending}
+                        className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                        {sending ? 'Sending...' : 'Send'}
+                    </button>
+                </div>
+            </form>
         </>
     );
 }
