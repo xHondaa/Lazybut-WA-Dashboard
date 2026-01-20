@@ -169,6 +169,26 @@ function MessageThread({ orderNumber, phoneNumber }) {
         return () => unsubscribe();
     }, [orderNumber]);
 
+    const getMessageContent = (msg) => {
+        // Handle button clicks
+        if (msg.message_type === 'button' && msg.button_title) {
+            return `🔘 ${msg.button_title}`;
+        }
+
+        // Handle template messages
+        if (msg.message_type === 'template' && msg.template_name) {
+            return `📋 Template: ${msg.template_name}`;
+        }
+
+        // Handle regular text
+        if (msg.text) {
+            return msg.text;
+        }
+
+        // Fallback
+        return `[${msg.message_type || 'Unknown message type'}]`;
+    };
+
     return (
         <>
             {/* Header */}
@@ -187,9 +207,11 @@ function MessageThread({ orderNumber, phoneNumber }) {
                         <div className={`max-w-xs px-4 py-2 rounded-lg shadow-sm ${
                             msg.direction === 'outbound'
                                 ? 'bg-emerald-500 text-white'
-                                : 'bg-white text-gray-800 border border-gray-200'
+                                : msg.message_type === 'button'
+                                    ? 'bg-blue-50 text-gray-800 border border-blue-200'
+                                    : 'bg-white text-gray-800 border border-gray-200'
                         }`}>
-                            <div className="break-words">{msg.text}</div>
+                            <div className="break-words">{getMessageContent(msg)}</div>
                             <div className={`text-xs mt-1 ${
                                 msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
                             }`}>
