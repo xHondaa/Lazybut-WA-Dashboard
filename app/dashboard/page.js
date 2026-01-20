@@ -9,7 +9,7 @@ export default function Dashboard() {
   const [selectedOrder, setSelectedOrder] = useState(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'whatsappMessages'), orderBy('timestamp', 'desc'));
+    const q = query(collection(db, 'orders'), orderBy('confirmation_sent_at', 'desc'));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const orderData = snapshot.docs.map(doc => ({
