@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, where, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export default function Dashboard() {
@@ -9,8 +9,13 @@ export default function Dashboard() {
   const [selectedOrder, setSelectedOrder] = useState(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'orders'), orderBy('confirmation_sent_at', 'desc'));
-    
+    // Limit initial orders for performance; add pagination later if needed
+    const q = query(
+      collection(db, 'orders'),
+      orderBy('confirmation_sent_at', 'desc'),
+      limit(50)
+    );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const orderData = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -32,12 +37,16 @@ export default function Dashboard() {
         {orders.map(order => (
           <div 
             key={order.id}
-            onClick={() => setSelectedOrder(order)}
+            onClick={() => setSelectedOrder({
+              id: order.id,
+              order_number: order.order_number,
+              phone_e164: order.phone_e164,
+            })}
             className="p-4 border-b hover:bg-gray-50 cursor-pointer"
           >
             <div className="font-semibold">{order.phone_e164}</div>
             <div className="text-sm text-gray-600">Order #{order.order_number}</div>
-            <div className="text-xs text-gray-400">{order.order_status}</div>
+            <div className="text-xs text-gray-400">{order.status}</div>
           </div>
         ))}
       </div>
@@ -46,6 +55,7 @@ export default function Dashboard() {
       <div className="w-2/3 flex flex-col">
           {selectedOrder ? (
               <MessageThread
+                  key={selectedOrder.order_number}
                   orderId={selectedOrder.id}
                   orderNumber={selectedOrder.order_number}
               />
@@ -59,20 +69,34 @@ export default function Dashboard() {
   );
 }
 
-function MessageThread({ orderId, orderNumber }) {
+function MessageThread({ orderNumber }) {
     const [messages, setMessages] = useState([]);
 
     useEffect(() => {
+        if (!orderNumber) return;
+
         const q = query(
             collection(db, 'whatsappMessages'),
+            where('order_number', '==', orderNumber),
             orderBy('timestamp', 'asc')
         );
 
+        // Use incremental updates to avoid rebuilding large arrays
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const messageData = snapshot.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(msg => msg.order_number === orderNumber);
-            setMessages(messageData);
+            setMessages((prev) => {
+                let next = [...prev];
+                snapshot.docChanges().forEach((change) => {
+                    const data = { id: change.doc.id, ...change.doc.data() };
+                    if (change.type === 'added') {
+                        next.push(data);
+                    } else if (change.type === 'modified') {
+                        next = next.map((m) => (m.id === data.id ? data : m));
+                    } else if (change.type === 'removed') {
+                        next = next.filter((m) => m.id !== data.id);
+                    }
+                });
+                return next;
+            });
         });
 
         return () => unsubscribe();
@@ -80,7 +104,7 @@ function MessageThread({ orderId, orderNumber }) {
 
     return (
         <div className="flex-1 overflow-y-auto p-4">
-            {messages.map(msg => (
+            {messages.map((msg) => (
                 <div
                     key={msg.id}
                     className={`mb-4 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
@@ -92,7 +116,9 @@ function MessageThread({ orderId, orderNumber }) {
                     }`}>
                         <div>{msg.text}</div>
                         <div className="text-xs mt-1 opacity-70">
-                            {new Date(msg.timestamp).toLocaleTimeString()}
+                            {msg.created_at?.toDate
+                                ? msg.created_at.toDate().toLocaleTimeString()
+                                : new Date(msg.timestamp).toLocaleTimeString()}
                         </div>
                         {msg.direction === 'outbound' && msg.status && (
                             <div className="text-xs mt-1">{msg.status}</div>
