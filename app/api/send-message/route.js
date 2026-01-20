@@ -12,7 +12,7 @@ export async function POST(request) {
         }
 
         // Call your Railway WhatsApp API endpoint
-        const response = await fetch('https://wa-confirmation-automation-production.up.railway.app/api/Ssend-text-message', {
+        const response = await fetch('https://wa-confirmation-automation-production.up.railway.app/api/sendTextMessage', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
