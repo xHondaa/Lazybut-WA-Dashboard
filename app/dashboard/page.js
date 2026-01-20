@@ -1,12 +1,65 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { collection, query, orderBy, onSnapshot, where, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [searchPhone, setSearchPhone] = useState('');
+  const [searchOrder, setSearchOrder] = useState('');
+  const [lastByOrder, setLastByOrder] = useState({});
+
+  // Track latest message per order to sort conversations like WhatsApp
+  useEffect(() => {
+    const q = query(
+      collection(db, 'whatsappMessages'),
+      orderBy('timestamp', 'desc'),
+      limit(500)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const updates = {};
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'removed') return;
+        const data = change.doc.data();
+        const ord = data.order_number;
+        if (!ord) return;
+        const ts = data.created_at?.toDate ? data.created_at.toDate().getTime() : new Date(data.timestamp).getTime();
+        if (!Number.isFinite(ts)) return;
+        updates[ord] = Math.max(updates[ord] || 0, ts);
+      });
+      if (Object.keys(updates).length) {
+        setLastByOrder((prev) => {
+          const next = { ...prev };
+          Object.entries(updates).forEach(([ord, ts]) => {
+            next[ord] = Math.max(prev[ord] || 0, ts);
+          });
+          return next;
+        });
+      }
+    });
+    return unsub;
+  }, []);
+
+  const displayOrders = useMemo(() => {
+    const toMillis = (ts) => {
+      if (!ts) return 0;
+      if (ts.toDate) return ts.toDate().getTime();
+      return new Date(ts).getTime() || 0;
+    };
+    return orders
+      .filter((o) => {
+        const phoneOk = !searchPhone || (o.phone_e164 || '').includes(searchPhone);
+        const orderOk = !searchOrder || String(o.order_number || '').includes(searchOrder);
+        return phoneOk && orderOk;
+      })
+      .sort((a, b) => {
+        const aLast = lastByOrder[a.order_number] || toMillis(a.confirmation_sent_at);
+        const bLast = lastByOrder[b.order_number] || toMillis(b.confirmation_sent_at);
+        return bLast - aLast;
+      });
+  }, [orders, searchPhone, searchOrder, lastByOrder]);
 
   useEffect(() => {
     // Limit initial orders for performance; add pagination later if needed
@@ -33,8 +86,22 @@ export default function Dashboard() {
       <div className="w-1/3 border-r overflow-y-auto">
         <div className="p-4 border-b bg-gray-50">
           <h1 className="text-xl font-bold">Conversations</h1>
+          <div className="mt-3 flex gap-2">
+            <input
+              className="w-1/2 rounded border px-2 py-1 text-sm"
+              placeholder="Search phone"
+              value={searchPhone}
+              onChange={(e) => setSearchPhone(e.target.value)}
+            />
+            <input
+              className="w-1/2 rounded border px-2 py-1 text-sm"
+              placeholder="Search order #"
+              value={searchOrder}
+              onChange={(e) => setSearchOrder(e.target.value)}
+            />
+          </div>
         </div>
-        {orders.map(order => (
+        {displayOrders.map(order => (
           <div 
             key={order.id}
             onClick={() => setSelectedOrder({
