@@ -209,18 +209,34 @@ function MessageThread({ orderNumber, phoneNumber }) {
 
     const getMessageContent = (msg) => {
         // Handle images
-        if (msg.message_type === 'image' && msg.raw?.image?.url) {
-            return (
-                <img
-                    src={msg.raw.image.url}
-                    alt="Received image"
-                    className="rounded max-w-full"
-                    onError={(e) => {
-                        e.target.style.display = 'none';
-                        e.target.nextSibling.style.display = 'block';
-                    }}
-                />
-            );
+        if (msg.message_type === 'image') {
+            console.log('Image message:', msg);
+            console.log('Image URL:', msg.raw?.image?.url);
+
+            const imageUrl = msg.raw?.image?.url;
+
+            if (imageUrl) {
+                return (
+                    <div>
+                        <img
+                            src={imageUrl}
+                            alt="Received image"
+                            className="rounded max-w-full"
+                            onError={(e) => {
+                                console.error('Image failed to load:', imageUrl);
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'block';
+                            }}
+                            onLoad={() => console.log('Image loaded successfully')}
+                        />
+                        <div style={{display: 'none'}} className="text-sm text-gray-500">
+                            Image unavailable
+                        </div>
+                    </div>
+                );
+            }
+
+            return '📷 [Image - URL not available]';
         }
 
         // Handle button clicks
@@ -296,11 +312,6 @@ function MessageThread({ orderNumber, phoneNumber }) {
                         }`}>
                             <div className="break-words">
                                 {getMessageContent(msg)}
-                                {msg.message_type === 'image' && (
-                                    <div style={{display: 'none'}} className="text-sm text-gray-500">
-                                        Image unavailable
-                                    </div>
-                                )}
                             </div>
                             <div className={`text-xs mt-1 ${
                                 msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
