@@ -208,14 +208,32 @@ function MessageThread({ orderNumber, phoneNumber }) {
     }, [orderNumber]);
 
     const getMessageContent = (msg) => {
+        // Handle images
+        if (msg.message_type === 'image' && msg.raw?.image?.url) {
+            return (
+                <img
+                    src={msg.raw.image.url}
+                    alt="Received image"
+                    className="rounded max-w-full"
+                    onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.nextSibling.style.display = 'block';
+                    }}
+                />
+            );
+        }
+
+        // Handle button clicks
         if (msg.message_type === 'button' && msg.button_title) {
             return `🔘 ${msg.button_title}`;
         }
 
+        // Handle template messages
         if (msg.message_type === 'template' && msg.template_name) {
             return `📋 Template: ${msg.template_name}`;
         }
 
+        // Handle regular text
         if (msg.text) {
             return msg.text;
         }
@@ -276,7 +294,14 @@ function MessageThread({ orderNumber, phoneNumber }) {
                                     ? 'bg-blue-50 text-gray-800 border border-blue-200'
                                     : 'bg-white text-gray-800 border border-gray-200'
                         }`}>
-                            <div className="break-words">{getMessageContent(msg)}</div>
+                            <div className="break-words">
+                                {getMessageContent(msg)}
+                                {msg.message_type === 'image' && (
+                                    <div style={{display: 'none'}} className="text-sm text-gray-500">
+                                        Image unavailable
+                                    </div>
+                                )}
+                            </div>
                             <div className={`text-xs mt-1 ${
                                 msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
                             }`}>
