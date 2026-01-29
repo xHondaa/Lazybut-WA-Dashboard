@@ -1,25 +1,28 @@
 'use client';
 
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { collection, query, orderBy, onSnapshot, where, limit } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, where, limit, getDocs, startAfter } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getTemplateContent } from '@/lib/templates';
-
 
 export default function Dashboard() {
     const [orders, setOrders] = useState([]);
     const [selectedOrder, setSelectedOrder] = useState(null);
-    const [search, setSearch] = useState(''); // Single search field
+    const [search, setSearch] = useState('');
     const [lastByOrder, setLastByOrder] = useState({});
-    const [lastMessageByOrder, setLastMessageByOrder] = useState({}); // Store last message content
+    const [lastMessageByOrder, setLastMessageByOrder] = useState({});
+    const [lastVisible, setLastVisible] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
 
-    // Track latest message per order to sort conversations like WhatsApp
+    // Track latest message per order
     useEffect(() => {
         const q = query(
             collection(db, 'whatsappMessages'),
             orderBy('timestamp', 'desc'),
-            limit(500)
+            limit(100)
         );
+
         const unsub = onSnapshot(q, (snapshot) => {
             const updates = {};
             const lastMessages = {};
@@ -32,10 +35,8 @@ export default function Dashboard() {
                 const ts = data.created_at?.toDate ? data.created_at.toDate().getTime() : new Date(data.timestamp).getTime();
                 if (!Number.isFinite(ts)) return;
 
-                // Track timestamp
                 updates[ord] = Math.max(updates[ord] || 0, ts);
 
-                // Track last message content
                 if (!lastMessages[ord] || ts > (lastMessages[ord].timestamp || 0)) {
                     lastMessages[ord] = {
                         text: data.text || (data.message_type === 'button' ? `🔘 ${data.button_title}` : (data.message_type === 'template' ? `📋 ${data.template_name}` : `[${data.message_type}]`)),
@@ -44,6 +45,7 @@ export default function Dashboard() {
                     };
                 }
             });
+
             if (Object.keys(updates).length) {
                 setLastByOrder((prev) => {
                     const next = { ...prev };
@@ -61,12 +63,61 @@ export default function Dashboard() {
         return unsub;
     }, []);
 
+    const loadOrders = async (loadMore = false) => {
+        if (loading) return;
+        setLoading(true);
+
+        try {
+            let q;
+            if (loadMore && lastVisible) {
+                q = query(
+                    collection(db, 'orders'),
+                    orderBy('confirmation_sent_at', 'desc'),
+                    startAfter(lastVisible),
+                    limit(20)
+                );
+            } else {
+                q = query(
+                    collection(db, 'orders'),
+                    orderBy('confirmation_sent_at', 'desc'),
+                    limit(20)
+                );
+            }
+
+            const snapshot = await getDocs(q);
+
+            if (snapshot.empty) {
+                setHasMore(false);
+                setLoading(false);
+                return;
+            }
+
+            const newOrders = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+
+            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+            setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
+            setHasMore(snapshot.docs.length === 20);
+        } catch (error) {
+            console.error('Error loading orders:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadOrders();
+    }, []);
+
     const displayOrders = useMemo(() => {
         const toMillis = (ts) => {
             if (!ts) return 0;
             if (ts.toDate) return ts.toDate().getTime();
             return new Date(ts).getTime() || 0;
         };
+
         return orders
             .filter((o) => {
                 if (!search) return true;
@@ -85,24 +136,6 @@ export default function Dashboard() {
             });
     }, [orders, search, lastByOrder]);
 
-    useEffect(() => {
-        const q = query(
-            collection(db, 'orders'),
-            orderBy('confirmation_sent_at', 'desc'),
-            limit(50)
-        );
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const orderData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            setOrders(orderData);
-        });
-
-        return () => unsubscribe();
-    }, []);
-
     return (
         <div className="flex h-screen bg-gray-50">
             {/* Conversations list */}
@@ -118,6 +151,7 @@ export default function Dashboard() {
                         />
                     </div>
                 </div>
+
                 {displayOrders.map(order => {
                     const lastMsg = lastMessageByOrder[order.order_number];
                     return (
@@ -125,9 +159,9 @@ export default function Dashboard() {
                             key={order.id}
                             onClick={() => setSelectedOrder({
                                 id: order.id,
+                                order_id: order.order_id,
                                 order_number: order.order_number,
                                 phone_e164: order.phone_e164,
-                                order_id: order.order_id,
                             })}
                             className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
                                 selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
@@ -147,7 +181,21 @@ export default function Dashboard() {
                         </div>
                     );
                 })}
+
+                {/* Load More Button */}
+                {hasMore && !search && (
+                    <div className="p-4">
+                        <button
+                            onClick={() => loadOrders(true)}
+                            disabled={loading}
+                            className="w-full py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 disabled:bg-gray-100 disabled:text-gray-400 transition-colors"
+                        >
+                            {loading ? 'Loading...' : 'Load More'}
+                        </button>
+                    </div>
+                )}
             </div>
+
             {/* Message thread */}
             <div className="w-2/3 flex flex-col bg-gray-50">
                 {selectedOrder ? (
@@ -168,77 +216,70 @@ export default function Dashboard() {
     );
 }
 
-function MessageThread({ shopifyId, orderNumber, phoneNumber }) {
+function MessageThread({shopifyId, orderNumber, phoneNumber }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
     const messagesEndRef = useRef(null);
+    const messagesContainerRef = useRef(null);
+    const [loadingOlder, setLoadingOlder] = useState(false);
+    const [hasMoreMessages, setHasMoreMessages] = useState(true);
+    const [oldestMessage, setOldestMessage] = useState(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
-
+    // Load initial messages (most recent 50)
     useEffect(() => {
         if (!orderNumber) return;
 
         const qNum = query(
             collection(db, 'whatsappMessages'),
             where('order_number', '==', Number(orderNumber)),
-            orderBy('timestamp', 'asc')
+            orderBy('timestamp', 'desc'),
+            limit(50)
         );
 
         const qStr = query(
             collection(db, 'whatsappMessages'),
             where('order_number', '==', String(orderNumber)),
-            orderBy('timestamp', 'asc')
+            orderBy('timestamp', 'desc'),
+            limit(50)
         );
 
+        let allMessages = [];
+
         const unsubNum = onSnapshot(qNum, (snapshot) => {
-            setMessages((prev) => {
-                let next = [...prev];
-                snapshot.docChanges().forEach((change) => {
-                    const data = { id: change.doc.id, ...change.doc.data() };
-                    if (change.type === 'added') {
-                        const exists = next.some(m => m.id === data.id);
-                        if (!exists) next.push(data);
-                    } else if (change.type === 'modified') {
-                        next = next.map((m) => (m.id === data.id ? data : m));
-                    } else if (change.type === 'removed') {
-                        next = next.filter((m) => m.id !== data.id);
-                    }
-                });
-                return next.sort((a, b) => {
-                    const aTime = new Date(a.timestamp).getTime();
-                    const bTime = new Date(b.timestamp).getTime();
-                    return aTime - bTime;
-                });
+            const numMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            allMessages = [...allMessages.filter(m => !numMessages.find(nm => nm.id === m.id)), ...numMessages];
+
+            const sorted = allMessages.sort((a, b) => {
+                const aTime = new Date(a.timestamp).getTime();
+                const bTime = new Date(b.timestamp).getTime();
+                return aTime - bTime;
             });
+
+            setMessages(sorted);
+            if (snapshot.docs.length > 0) {
+                setOldestMessage(snapshot.docs[snapshot.docs.length - 1]);
+            }
+            setHasMoreMessages(snapshot.docs.length === 50);
+
+            setTimeout(scrollToBottom, 100);
         });
 
         const unsubStr = onSnapshot(qStr, (snapshot) => {
-            setMessages((prev) => {
-                let next = [...prev];
-                snapshot.docChanges().forEach((change) => {
-                    const data = { id: change.doc.id, ...change.doc.data() };
-                    if (change.type === 'added') {
-                        const exists = next.some(m => m.id === data.id);
-                        if (!exists) next.push(data);
-                    } else if (change.type === 'modified') {
-                        next = next.map((m) => (m.id === data.id ? data : m));
-                    } else if (change.type === 'removed') {
-                        next = next.filter((m) => m.id !== data.id);
-                    }
-                });
-                return next.sort((a, b) => {
-                    const aTime = new Date(a.timestamp).getTime();
-                    const bTime = new Date(b.timestamp).getTime();
-                    return aTime - bTime;
-                });
+            const strMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            allMessages = [...allMessages.filter(m => !strMessages.find(sm => sm.id === m.id)), ...strMessages];
+
+            const sorted = allMessages.sort((a, b) => {
+                const aTime = new Date(a.timestamp).getTime();
+                const bTime = new Date(b.timestamp).getTime();
+                return aTime - bTime;
             });
+
+            setMessages(sorted);
         });
 
         return () => {
@@ -247,36 +288,85 @@ function MessageThread({ shopifyId, orderNumber, phoneNumber }) {
         };
     }, [orderNumber]);
 
+    // Load older messages when scrolling to top
+    const loadOlderMessages = async () => {
+        if (!oldestMessage || loadingOlder || !hasMoreMessages) return;
+
+        setLoadingOlder(true);
+
+        try {
+            const q = query(
+                collection(db, 'whatsappMessages'),
+                where('order_number', '==', Number(orderNumber)),
+                orderBy('timestamp', 'desc'),
+                startAfter(oldestMessage),
+                limit(30)
+            );
+
+            const snapshot = await getDocs(q);
+
+            if (snapshot.empty) {
+                setHasMoreMessages(false);
+                setLoadingOlder(false);
+                return;
+            }
+
+            const olderMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            setMessages(prev => {
+                const combined = [...olderMessages, ...prev];
+                return combined.sort((a, b) => {
+                    const aTime = new Date(a.timestamp).getTime();
+                    const bTime = new Date(b.timestamp).getTime();
+                    return aTime - bTime;
+                });
+            });
+
+            setOldestMessage(snapshot.docs[snapshot.docs.length - 1]);
+            setHasMoreMessages(snapshot.docs.length === 30);
+        } catch (error) {
+            console.error('Error loading older messages:', error);
+        } finally {
+            setLoadingOlder(false);
+        }
+    };
+
+    // Detect scroll to top
+    const handleScroll = (e) => {
+        const container = e.target;
+        if (container.scrollTop === 0 && hasMoreMessages) {
+            loadOlderMessages();
+        }
+    };
+
     const getMessageContent = (msg) => {
         // Handle images
         if (msg.message_type === 'image') {
-            console.log('Image message:', msg);
-            console.log('Image URL:', msg.raw?.image?.url);
-
             const imageUrl = msg.raw?.image?.url;
 
-            if (imageUrl) {
-                return (
-                    <div>
-                        <img
-                            src={imageUrl}
-                            alt="Received image"
-                            className="rounded max-w-full"
-                            onError={(e) => {
-                                console.error('Image failed to load:', imageUrl);
-                                e.target.style.display = 'none';
-                                e.target.nextSibling.style.display = 'block';
-                            }}
-                            onLoad={() => console.log('Image loaded successfully')}
-                        />
-                        <div style={{display: 'none'}} className="text-sm text-gray-500">
-                            Image unavailable
-                        </div>
-                    </div>
-                );
+            if (!imageUrl) {
+                return `📷 [Image - no URL found]`;
             }
 
-            return '📷 [Image - URL not available]';
+            const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
+            const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(imageUrl)}`;
+
+            return (
+                <div>
+                    <img
+                        src={proxiedUrl}
+                        alt="Received image"
+                        className="rounded max-w-full"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'block';
+                        }}
+                    />
+                    <div style={{display: 'none'}} className="text-sm text-gray-500">
+                        Image unavailable
+                    </div>
+                </div>
+            );
         }
 
         // Handle button clicks
@@ -294,6 +384,7 @@ function MessageThread({ shopifyId, orderNumber, phoneNumber }) {
             return msg.text;
         }
 
+        // Fallback
         return `[${msg.message_type || 'Unknown message type'}]`;
     };
 
@@ -332,77 +423,85 @@ function MessageThread({ shopifyId, orderNumber, phoneNumber }) {
 
     return (
         <>
-            {/* Header */}
-            <div className="p-4 bg-emerald-600 border-b border-emerald-700 flex justify-between items-center">
-                <div>
-                    <div className="font-semibold text-white">{phoneNumber}</div>
-                    <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
-                </div>
-                <a
-                href={`https://admin.shopify.com/store/lazybut/orders/${shopifyId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-emerald-100 hover:text-white underline"
-                >
-                View in Shopify →
-                </a>
+        {/* Header */}
+        <div className="p-4 bg-emerald-600 border-b border-emerald-700 flex justify-between items-center">
+            <div>
+                <div className="font-semibold text-white">{phoneNumber}</div>
+                <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
             </div>
+        <a
+            href={`https://admin.shopify.com/store/lazybut/orders/${shopifyId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-emerald-100 hover:text-white underline"
+            >
+            View in Shopify →
+        </a>
+        </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
-                {messages.map((msg) => (
-                    <div
-                        key={msg.id}
-                        className={`mb-3 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
-                    >
-                        <div className={`max-w-xs px-4 py-2 rounded-lg shadow-sm ${
-                            msg.direction === 'outbound'
-                                ? 'bg-emerald-500 text-white'
-                                : msg.message_type === 'button'
-                                    ? 'bg-blue-50 text-gray-800 border border-blue-200'
-                                    : 'bg-white text-gray-800 border border-gray-200'
-                        }`}>
-                            <div className="break-words">
-                                {getMessageContent(msg)}
-                            </div>
-                            <div className={`text-xs mt-1 ${
-                                msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
-                            }`}>
-                                {msg.created_at?.toDate
-                                    ? msg.created_at.toDate().toLocaleTimeString()
-                                    : new Date(msg.timestamp).toLocaleTimeString()}
-                            </div>
-                            {msg.direction === 'outbound' && msg.status && (
-                                <div className="text-xs mt-1 text-emerald-100 capitalize">
-                                    {msg.status}
-                                </div>
-                            )}
-                        </div>
+    {/* Messages */}
+    <div
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-4 bg-gray-50"
+    >
+        {loadingOlder && (
+            <div className="text-center py-2 text-gray-500 text-sm">
+                Loading older messages...
+            </div>
+        )}
+
+        {messages.map((msg) => (
+            <div
+                key={msg.id}
+                className={`mb-3 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
+            >
+                <div className={`max-w-xs px-4 py-2 rounded-lg shadow-sm ${
+                    msg.direction === 'outbound'
+                        ? 'bg-emerald-500 text-white'
+                        : msg.message_type === 'button'
+                            ? 'bg-blue-50 text-gray-800 border border-blue-200'
+                            : 'bg-white text-gray-800 border border-gray-200'
+                }`}>
+                    <div className="break-words">{getMessageContent(msg)}</div>
+                    <div className={`text-xs mt-1 ${
+                        msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
+                    }`}>
+                        {msg.created_at?.toDate
+                            ? msg.created_at.toDate().toLocaleTimeString()
+                            : new Date(msg.timestamp).toLocaleTimeString()}
                     </div>
-                ))}
-                <div ref={messagesEndRef} />
-            </div>
-
-            {/* Message input */}
-            <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-200">
-                <div className="flex gap-2">
-                    <input
-                        type="text"
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        placeholder="Type a message..."
-                        disabled={sending}
-                        className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-100"
-                    />
-                    <button
-                        type="submit"
-                        disabled={!newMessage.trim() || sending}
-                        className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                    >
-                        {sending ? 'Sending...' : 'Send'}
-                    </button>
+                    {msg.direction === 'outbound' && msg.status && (
+                        <div className="text-xs mt-1 text-emerald-100 capitalize">
+                            {msg.status}
+                        </div>
+                    )}
                 </div>
-            </form>
-        </>
-    );
+            </div>
+        ))}
+        <div ref={messagesEndRef} />
+    </div>
+
+    {/* Message input */}
+    <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-200">
+        <div className="flex gap-2">
+            <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Type a message..."
+                disabled={sending}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-100"
+            />
+            <button
+                type="submit"
+                disabled={!newMessage.trim() || sending}
+                className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+                {sending ? 'Sending...' : 'Send'}
+            </button>
+        </div>
+    </form>
+</>
+);
 }

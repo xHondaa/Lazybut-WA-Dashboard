@@ -1,11 +1,12 @@
 
 Quick Wins
 
- Search by customer name (not just phone and order number)
- Add single unified search bar that filters across all fields
+// Search by customer name (not just phone and order number)
+// Add single unified search bar that filters across all fields
+// Scroll to the bottom of the chat on opening
  Show unread message count badge on each conversation
  Mark conversations as resolved or archived
- Show last message preview in conversations list (like WhatsApp)
+// Show last message preview in conversations list (like WhatsApp)
  Add date to message timestamps (show "Yesterday", "Jan 20" for older messages)
 
 Medium Effort
