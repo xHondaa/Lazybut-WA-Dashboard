@@ -7,6 +7,7 @@ import { getTemplateContent } from '@/lib/templates';
 
 export default function Dashboard() {
     const [orders, setOrders] = useState([]);
+    const [unassignedCustomers, setUnassignedCustomers] = useState([]); // Add this
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [search, setSearch] = useState('');
     const [lastByOrder, setLastByOrder] = useState({});
@@ -15,51 +16,39 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(false);
     const [hasMore, setHasMore] = useState(true);
 
-    // Track latest message per order
+    // Track unassigned messages (no order_number)
     useEffect(() => {
         const q = query(
             collection(db, 'whatsappMessages'),
+            where('order_number', '==', null),
             orderBy('timestamp', 'desc'),
-            limit(100)
+            limit(50)
         );
 
         const unsub = onSnapshot(q, (snapshot) => {
-            const updates = {};
-            const lastMessages = {};
+            const customerMap = {};
 
-            snapshot.docChanges().forEach((change) => {
-                if (change.type === 'removed') return;
-                const data = change.doc.data();
-                const ord = data.order_number;
-                if (!ord) return;
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                const customer = data.customer;
+                if (!customer) return;
+
                 const ts = data.created_at?.toDate ? data.created_at.toDate().getTime() : new Date(data.timestamp).getTime();
-                if (!Number.isFinite(ts)) return;
 
-                updates[ord] = Math.max(updates[ord] || 0, ts);
-
-                if (!lastMessages[ord] || ts > (lastMessages[ord].timestamp || 0)) {
-                    lastMessages[ord] = {
-                        text: data.text || (data.message_type === 'button' ? `🔘 ${data.button_title}` : (data.message_type === 'template' ? `📋 ${data.template_name}` : `[${data.message_type}]`)),
+                if (!customerMap[customer] || ts > customerMap[customer].timestamp) {
+                    customerMap[customer] = {
+                        customer: customer,
+                        phone_e164: `+${customer}`,
+                        lastMessage: data.text || (data.message_type === 'button' ? `🔘 ${data.button_title}` : (data.message_type === 'template' ? `📋 ${data.template_name}` : `[${data.message_type}]`)),
                         timestamp: ts,
                         direction: data.direction
                     };
                 }
             });
 
-            if (Object.keys(updates).length) {
-                setLastByOrder((prev) => {
-                    const next = { ...prev };
-                    Object.entries(updates).forEach(([ord, ts]) => {
-                        next[ord] = Math.max(prev[ord] || 0, ts);
-                    });
-                    return next;
-                });
-            }
-
-            if (Object.keys(lastMessages).length) {
-                setLastMessageByOrder((prev) => ({ ...prev, ...lastMessages }));
-            }
+            setUnassignedCustomers(Object.values(customerMap).sort((a, b) => b.timestamp - a.timestamp));
         });
+
         return unsub;
     }, []);
 
@@ -69,38 +58,58 @@ export default function Dashboard() {
         setLoading(true);
 
         try {
-            let q;
+            let ordersWithMessages = [];
+            let ordersWithoutMessages = [];
+
+            // First, load orders with last_message_at
+            let qWithMessages;
             if (loadMore && lastVisible) {
-                q = query(
+                qWithMessages = query(
                     collection(db, 'orders'),
+                    where('last_message_at', '!=', null),
                     orderBy('last_message_at', 'desc'),
                     startAfter(lastVisible),
                     limit(20)
                 );
             } else {
-                q = query(
+                qWithMessages = query(
                     collection(db, 'orders'),
+                    where('last_message_at', '!=', null),
                     orderBy('last_message_at', 'desc'),
                     limit(20)
                 );
             }
 
-            const snapshot = await getDocs(q);
-
-            if (snapshot.empty) {
-                setHasMore(false);
-                setLoading(false);
-                return;
-            }
-
-            const newOrders = snapshot.docs.map(doc => ({
+            const snapshotWithMessages = await getDocs(qWithMessages);
+            ordersWithMessages = snapshotWithMessages.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
 
-            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-            setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
-            setHasMore(snapshot.docs.length === 20);
+            // If we got less than 20, load some orders without messages to fill
+            if (ordersWithMessages.length < 20 && !loadMore) {
+                const qWithoutMessages = query(
+                    collection(db, 'orders'),
+                    where('last_message_at', '==', null),
+                    orderBy('confirmation_sent_at', 'desc'),
+                    limit(20 - ordersWithMessages.length)
+                );
+
+                const snapshotWithoutMessages = await getDocs(qWithoutMessages);
+                ordersWithoutMessages = snapshotWithoutMessages.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+            }
+
+            const allOrders = [...ordersWithMessages, ...ordersWithoutMessages];
+
+            if (snapshotWithMessages.docs.length > 0) {
+                setLastVisible(snapshotWithMessages.docs[snapshotWithMessages.docs.length - 1]);
+            }
+
+            setOrders(prev => loadMore ? [...prev, ...allOrders] : allOrders);
+            setHasMore(snapshotWithMessages.docs.length === 20);
         } catch (error) {
             console.error('Error loading orders:', error);
         } finally {
@@ -143,6 +152,42 @@ export default function Dashboard() {
                     </div>
                 </div>
 
+                {/* Unassigned Messages Section */}
+                {!search && unassignedCustomers.length > 0 && (
+                    <>
+                        <div className="p-2 bg-amber-50 border-b border-amber-200">
+                            <div className="text-xs font-semibold text-amber-800 px-2">Unassigned Messages</div>
+                        </div>
+                        {unassignedCustomers.map(customer => (
+                            <div
+                                key={customer.customer}
+                                onClick={() => setSelectedOrder({
+                                    id: null,
+                                    order_id: null,
+                                    order_number: null,
+                                    phone_e164: customer.phone_e164,
+                                    customer: customer.customer,
+                                })}
+                                className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
+                                    selectedOrder?.customer === customer.customer ? 'bg-emerald-50' : ''
+                                }`}
+                            >
+                                <div className="font-semibold text-gray-900">{customer.phone_e164}</div>
+                                <div className="text-sm text-amber-600">No order assigned</div>
+                                <div className={`text-xs mt-1 truncate ${
+                                    customer.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
+                                }`}>
+                                    {customer.direction === 'outbound' && '✓ '}
+                                    {customer.lastMessage}
+                                </div>
+                            </div>
+                        ))}
+                        <div className="p-2 bg-gray-100 border-b border-gray-200">
+                            <div className="text-xs font-semibold text-gray-600 px-2">Orders</div>
+                        </div>
+                    </>
+                )}
+
                 {loading && orders.length === 0 ? (
                     <div className="p-4 text-center text-gray-500">Loading conversations...</div>
                 ) : (
@@ -156,6 +201,7 @@ export default function Dashboard() {
                                     order_id: order.order_id,
                                     order_number: order.order_number,
                                     phone_e164: order.phone_e164,
+                                    customer: null,
                                 })}
                                 className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
                                     selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
@@ -195,11 +241,12 @@ export default function Dashboard() {
             <div className="w-2/3 flex flex-col bg-gray-50">
                 {selectedOrder ? (
                     <MessageThread
-                        key={selectedOrder.order_number}
+                        key={selectedOrder.order_number || selectedOrder.customer}
                         orderId={selectedOrder.id}
                         shopifyId={selectedOrder.order_id}
                         orderNumber={selectedOrder.order_number}
                         phoneNumber={selectedOrder.phone_e164}
+                        customer={selectedOrder.customer}
                     />
                 ) : (
                     <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -211,7 +258,7 @@ export default function Dashboard() {
     );
 }
 
-function MessageThread({shopifyId, orderNumber, phoneNumber }) {
+function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
@@ -227,6 +274,28 @@ function MessageThread({shopifyId, orderNumber, phoneNumber }) {
 
     // Load initial messages (most recent 50)
     useEffect(() => {
+
+        if (customer && !orderNumber) {
+            const q = query(
+                collection(db, 'whatsappMessages'),
+                where('customer', '==', customer),
+                where('order_number', '==', null),
+                orderBy('timestamp', 'desc'),
+                limit(50)
+            );
+
+            const unsub = onSnapshot(q, (snapshot) => {
+                const messageData = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .reverse();
+
+                setMessages(messageData);
+                setTimeout(scrollToBottom, 100);
+            });
+
+            return () => unsub();
+        }
+
         if (!orderNumber) return;
 
         const qNum = query(
@@ -281,7 +350,7 @@ function MessageThread({shopifyId, orderNumber, phoneNumber }) {
             unsubNum();
             unsubStr();
         };
-    }, [orderNumber]);
+    }, [orderNumber, customer]);
 
     // Load older messages when scrolling to top
     const loadOlderMessages = async () => {
@@ -418,85 +487,97 @@ function MessageThread({shopifyId, orderNumber, phoneNumber }) {
 
     return (
         <>
-        {/* Header */}
-        <div className="p-4 bg-emerald-600 border-b border-emerald-700 flex justify-between items-center">
-            <div>
-                <div className="font-semibold text-white">{phoneNumber}</div>
-                <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
-            </div>
-        <a
-            href={`https://admin.shopify.com/store/lazybut/orders/${shopifyId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-emerald-100 hover:text-white underline"
-            >
-            View in Shopify →
-        </a>
-        </div>
-
-    {/* Messages */}
-    <div
-        ref={messagesContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 bg-gray-50"
-    >
-        {loadingOlder && (
-            <div className="text-center py-2 text-gray-500 text-sm">
-                Loading older messages...
-            </div>
-        )}
-
-        {messages.map((msg) => (
-            <div
-                key={msg.id}
-                className={`mb-3 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
-            >
-                <div className={`max-w-xs px-4 py-2 rounded-lg shadow-sm ${
-                    msg.direction === 'outbound'
-                        ? 'bg-emerald-500 text-white'
-                        : msg.message_type === 'button'
-                            ? 'bg-blue-50 text-gray-800 border border-blue-200'
-                            : 'bg-white text-gray-800 border border-gray-200'
-                }`}>
-                    <div className="break-words">{getMessageContent(msg)}</div>
-                    <div className={`text-xs mt-1 ${
-                        msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
-                    }`}>
-                        {msg.created_at?.toDate
-                            ? msg.created_at.toDate().toLocaleTimeString()
-                            : new Date(msg.timestamp).toLocaleTimeString()}
-                    </div>
-                    {msg.direction === 'outbound' && msg.status && (
-                        <div className="text-xs mt-1 text-emerald-100 capitalize">
-                            {msg.status}
+            {/* Header */}
+            <div className="p-4 bg-emerald-600 border-b border-emerald-700 flex justify-between items-center">
+                <div>
+                    <div className="font-semibold text-white">{phoneNumber}</div>
+                    {orderNumber ? (
+                        <div className="text-sm text-emerald-100">
+                            Order #{orderNumber}
+                        </div>
+                    ) : (
+                        <div className="text-sm text-amber-200">
+                            No order assigned
                         </div>
                     )}
                 </div>
-            </div>
-        ))}
-        <div ref={messagesEndRef} />
-    </div>
 
-    {/* Message input */}
-    <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-200">
-        <div className="flex gap-2">
-            <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Type a message..."
-                disabled={sending}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-100"
-            />
-            <button
-                type="submit"
-                disabled={!newMessage.trim() || sending}
-                className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                {shopifyId && (
+                    <a
+                        href={`https://admin.shopify.com/store/lazybut/orders/${shopifyId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-emerald-100 hover:text-white underline"
+                    >
+                        View in Shopify →
+                    </a>
+                )}
+            </div>
+
+
+            {/* Messages */}
+            <div
+                ref={messagesContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto p-4 bg-gray-50"
             >
-                {sending ? 'Sending...' : 'Send'}
-            </button>
-        </div>
-    </form>
-</>
-);
+                {loadingOlder && (
+                    <div className="text-center py-2 text-gray-500 text-sm">
+                        Loading older messages...
+                    </div>
+                )}
+
+                {messages.map((msg) => (
+                    <div
+                        key={msg.id}
+                        className={`mb-3 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
+                    >
+                        <div className={`max-w-xs px-4 py-2 rounded-lg shadow-sm ${
+                            msg.direction === 'outbound'
+                                ? 'bg-emerald-500 text-white'
+                                : msg.message_type === 'button'
+                                    ? 'bg-blue-50 text-gray-800 border border-blue-200'
+                                    : 'bg-white text-gray-800 border border-gray-200'
+                        }`}>
+                            <div className="break-words">{getMessageContent(msg)}</div>
+                            <div className={`text-xs mt-1 ${
+                                msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
+                            }`}>
+                                {msg.created_at?.toDate
+                                    ? msg.created_at.toDate().toLocaleTimeString()
+                                    : new Date(msg.timestamp).toLocaleTimeString()}
+                            </div>
+                            {msg.direction === 'outbound' && msg.status && (
+                                <div className="text-xs mt-1 text-emerald-100 capitalize">
+                                    {msg.status}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Message input */}
+            <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-200">
+                <div className="flex gap-2">
+                    <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        placeholder="Type a message..."
+                        disabled={sending}
+                        className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-100"
+                    />
+                    <button
+                        type="submit"
+                        disabled={!newMessage.trim() || sending}
+                        className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                        {sending ? 'Sending...' : 'Send'}
+                    </button>
+                </div>
+            </form>
+        </>
+    );
 }
