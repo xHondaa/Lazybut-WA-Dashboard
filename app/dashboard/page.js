@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, query, orderBy, onSnapshot, where, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { getTemplateContent } from '@/lib/templates';
+
 
 export default function Dashboard() {
     const [orders, setOrders] = useState([]);
@@ -246,7 +248,7 @@ function MessageThread({ orderNumber, phoneNumber }) {
 
         // Handle template messages
         if (msg.message_type === 'template' && msg.template_name) {
-            return `📋 Template: ${msg.template_name}`;
+            return getTemplateContent(msg.template_name, msg.variables);
         }
 
         // Handle regular text
