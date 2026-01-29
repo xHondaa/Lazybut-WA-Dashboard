@@ -127,6 +127,7 @@ export default function Dashboard() {
                                 id: order.id,
                                 order_number: order.order_number,
                                 phone_e164: order.phone_e164,
+                                order_id: order.order_id,
                             })}
                             className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
                                 selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
