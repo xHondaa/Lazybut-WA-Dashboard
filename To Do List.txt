@@ -14,7 +14,6 @@ Medium Effort
  Filter conversations by order status (pending, confirmed, shipped, cancelled)
  Export conversation to PDF or text file
  Show typing indicator when sending messages
- Add keyboard shortcuts (Enter to send, Cmd+K to search, arrows to navigate)
  Show delivery receipts with checkmarks (sent, delivered, read)
 
 Bigger Features
@@ -27,10 +26,11 @@ Bigger Features
 
 Performance Improvements
 
- Add pagination on conversations list (Load More button for older conversations)
- Lazy load messages (load recent first, older on scroll)
- Add Firebase indexes on customer, order_number, timestamp fields for faster queries
- Optimize real-time listeners to reduce Firebase read costs
+ // Add pagination on conversations list (Load More button for older conversations)
+ // Lazy load messages (load recent first, older on scroll)
+ // Add Firebase indexes on customer, order_number, timestamp fields for faster queries
+ // Optimize real-time listeners to reduce Firebase read costs
+ // Sort by last message sent and not by order date
 
 Technical Debt
 

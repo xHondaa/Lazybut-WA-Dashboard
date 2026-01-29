@@ -58,58 +58,39 @@ export default function Dashboard() {
         setLoading(true);
 
         try {
-            let ordersWithMessages = [];
-            let ordersWithoutMessages = [];
-
-            // First, load orders with last_message_at
-            let qWithMessages;
+            // Load all orders, sorted by last_message_at if it exists, otherwise by confirmation_sent_at
+            let q;
             if (loadMore && lastVisible) {
-                qWithMessages = query(
+                q = query(
                     collection(db, 'orders'),
-                    where('last_message_at', '!=', null),
-                    orderBy('last_message_at', 'desc'),
+                    orderBy('confirmation_sent_at', 'desc'),
                     startAfter(lastVisible),
                     limit(20)
                 );
             } else {
-                qWithMessages = query(
+                q = query(
                     collection(db, 'orders'),
-                    where('last_message_at', '!=', null),
-                    orderBy('last_message_at', 'desc'),
+                    orderBy('confirmation_sent_at', 'desc'),
                     limit(20)
                 );
             }
 
-            const snapshotWithMessages = await getDocs(qWithMessages);
-            ordersWithMessages = snapshotWithMessages.docs.map(doc => ({
+            const snapshot = await getDocs(q);
+
+            if (snapshot.empty) {
+                setHasMore(false);
+                setLoading(false);
+                return;
+            }
+
+            const newOrders = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
 
-            // If we got less than 20, load some orders without messages to fill
-            if (ordersWithMessages.length < 20 && !loadMore) {
-                const qWithoutMessages = query(
-                    collection(db, 'orders'),
-                    where('last_message_at', '==', null),
-                    orderBy('confirmation_sent_at', 'desc'),
-                    limit(20 - ordersWithMessages.length)
-                );
-
-                const snapshotWithoutMessages = await getDocs(qWithoutMessages);
-                ordersWithoutMessages = snapshotWithoutMessages.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-            }
-
-            const allOrders = [...ordersWithMessages, ...ordersWithoutMessages];
-
-            if (snapshotWithMessages.docs.length > 0) {
-                setLastVisible(snapshotWithMessages.docs[snapshotWithMessages.docs.length - 1]);
-            }
-
-            setOrders(prev => loadMore ? [...prev, ...allOrders] : allOrders);
-            setHasMore(snapshotWithMessages.docs.length === 20);
+            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+            setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
+            setHasMore(snapshot.docs.length === 20);
         } catch (error) {
             console.error('Error loading orders:', error);
         } finally {
@@ -123,17 +104,29 @@ export default function Dashboard() {
     }, []);
 
     const displayOrders = useMemo(() => {
-        return orders.filter((o) => {
-            if (!search) return true;
-            const searchLower = search.toLowerCase();
-            return (
-                (o.phone_e164 || '').includes(search) ||
-                String(o.order_number || '').includes(search) ||
-                (o.name || '').toLowerCase().includes(searchLower) ||
-                (o.status || '').toLowerCase().includes(searchLower)
-            );
-        });
-        // No need to sort here - already sorted by last_message_at from Firebase
+        const toMillis = (ts) => {
+            if (!ts) return 0;
+            if (ts.toDate) return ts.toDate().getTime();
+            return new Date(ts).getTime() || 0;
+        };
+
+        return orders
+            .filter((o) => {
+                if (!search) return true;
+                const searchLower = search.toLowerCase();
+                return (
+                    (o.phone_e164 || '').includes(search) ||
+                    String(o.order_number || '').includes(search) ||
+                    (o.name || '').toLowerCase().includes(searchLower) ||
+                    (o.status || '').toLowerCase().includes(searchLower)
+                );
+            })
+            .sort((a, b) => {
+                // Sort by last_message_at if it exists, otherwise by confirmation_sent_at
+                const aLast = toMillis(a.last_message_at) || toMillis(a.confirmation_sent_at);
+                const bLast = toMillis(b.last_message_at) || toMillis(b.confirmation_sent_at);
+                return bLast - aLast;
+            });
     }, [orders, search]);
 
     return (
@@ -432,7 +425,40 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                 </div>
             );
         }
+        // Handle audio/voice messages
+        if (msg.message_type === 'audio' || msg.message_type === 'voice') {
+            const audioUrl = msg.raw?.audio?.url || msg.raw?.voice?.url;
 
+            if (!audioUrl) {
+                return `🎤 [Voice message - no URL found]`;
+            }
+
+            const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
+            const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(audioUrl)}`;
+
+            return (
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        🎤 <span className="text-xs">Voice message</span>
+                    </div>
+                    <audio
+                        controls
+                        className="max-w-full"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'block';
+                        }}
+                    >
+                        <source src={proxiedUrl} type="audio/ogg" />
+                        <source src={proxiedUrl} type="audio/mpeg" />
+                        Your browser does not support audio playback.
+                    </audio>
+                    <div style={{display: 'none'}} className="text-sm text-gray-500">
+                        Audio unavailable
+                    </div>
+                </div>
+            );
+        }
         // Handle button clicks
         if (msg.message_type === 'button' && msg.button_title) {
             return `🔘 ${msg.button_title}`;
