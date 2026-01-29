@@ -11,9 +11,11 @@ export default function Dashboard() {
     const [search, setSearch] = useState('');
     const [lastByOrder, setLastByOrder] = useState({});
     const [lastMessageByOrder, setLastMessageByOrder] = useState({});
+    const [lastVisible, setLastVisible] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
 
-    // Track latest message per order - this runs globally
+    // Track latest message per order
     useEffect(() => {
         const q = query(
             collection(db, 'whatsappMessages'),
@@ -61,88 +63,69 @@ export default function Dashboard() {
         return unsub;
     }, []);
 
-    // Load ALL orders upfront, then we'll sort them by last message time
-    useEffect(() => {
-        const loadAllOrders = async () => {
-            setLoading(true);
-            const allOrders = [];
-            let lastDoc = null;
-            let hasMoreDocs = true;
+    // Load orders function
+    const loadOrders = async (loadMore = false) => {
+        if (loading) return;
+        setLoading(true);
 
-            try {
-                while (hasMoreDocs) {
-                    let q;
-                    if (lastDoc) {
-                        q = query(
-                            collection(db, 'orders'),
-                            orderBy('confirmation_sent_at', 'desc'),
-                            startAfter(lastDoc),
-                            limit(100)
-                        );
-                    } else {
-                        q = query(
-                            collection(db, 'orders'),
-                            orderBy('confirmation_sent_at', 'desc'),
-                            limit(100)
-                        );
-                    }
-
-                    const snapshot = await getDocs(q);
-
-                    if (snapshot.empty) {
-                        hasMoreDocs = false;
-                        break;
-                    }
-
-                    const newOrders = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data()
-                    }));
-
-                    allOrders.push(...newOrders);
-                    lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-                    if (snapshot.docs.length < 100) {
-                        hasMoreDocs = false;
-                    }
-                }
-
-                setOrders(allOrders);
-            } catch (error) {
-                console.error('Error loading orders:', error);
-            } finally {
-                setLoading(false);
+        try {
+            let q;
+            if (loadMore && lastVisible) {
+                q = query(
+                    collection(db, 'orders'),
+                    orderBy('last_message_at', 'desc'),
+                    startAfter(lastVisible),
+                    limit(20)
+                );
+            } else {
+                q = query(
+                    collection(db, 'orders'),
+                    orderBy('last_message_at', 'desc'),
+                    limit(20)
+                );
             }
-        };
 
-        loadAllOrders();
+            const snapshot = await getDocs(q);
+
+            if (snapshot.empty) {
+                setHasMore(false);
+                setLoading(false);
+                return;
+            }
+
+            const newOrders = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+
+            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+            setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
+            setHasMore(snapshot.docs.length === 20);
+        } catch (error) {
+            console.error('Error loading orders:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Load initial orders
+    useEffect(() => {
+        loadOrders();
     }, []);
 
     const displayOrders = useMemo(() => {
-        const toMillis = (ts) => {
-            if (!ts) return 0;
-            if (ts.toDate) return ts.toDate().getTime();
-            return new Date(ts).getTime() || 0;
-        };
-
-        return orders
-            .filter((o) => {
-                if (!search) return true;
-                const searchLower = search.toLowerCase();
-                return (
-                    (o.phone_e164 || '').includes(search) ||
-                    String(o.order_number || '').includes(search) ||
-                    (o.name || '').toLowerCase().includes(searchLower) ||
-                    (o.status || '').toLowerCase().includes(searchLower)
-                );
-            })
-            .sort((a, b) => {
-                // Sort by last message time first, then by order confirmation time
-                const aLast = lastByOrder[a.order_number] || toMillis(a.confirmation_sent_at);
-                const bLast = lastByOrder[b.order_number] || toMillis(b.confirmation_sent_at);
-                return bLast - aLast;
-            });
-    }, [orders, search, lastByOrder]);
+        return orders.filter((o) => {
+            if (!search) return true;
+            const searchLower = search.toLowerCase();
+            return (
+                (o.phone_e164 || '').includes(search) ||
+                String(o.order_number || '').includes(search) ||
+                (o.name || '').toLowerCase().includes(searchLower) ||
+                (o.status || '').toLowerCase().includes(searchLower)
+            );
+        });
+        // No need to sort here - already sorted by last_message_at from Firebase
+    }, [orders, search]);
 
     return (
         <div className="flex h-screen bg-gray-50">
@@ -192,6 +175,19 @@ export default function Dashboard() {
                             </div>
                         );
                     })
+                )}
+
+                {/* Load More Button */}
+                {hasMore && !search && (
+                    <div className="p-4">
+                        <button
+                            onClick={() => loadOrders(true)}
+                            disabled={loading}
+                            className="w-full py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 disabled:bg-gray-100 disabled:text-gray-400 transition-colors"
+                        >
+                            {loading ? 'Loading...' : 'Load More'}
+                        </button>
+                    </div>
                 )}
             </div>
 
