@@ -139,7 +139,7 @@ export default function Dashboard() {
     );
 }
 
-function MessageThread({ orderNumber, phoneNumber }) {
+function MessageThread({ orderId, orderNumber, phoneNumber }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
@@ -294,11 +294,21 @@ function MessageThread({ orderNumber, phoneNumber }) {
 
     return (
         <>
+            {/* Header */}
             <div className="p-4 bg-emerald-600 border-b border-emerald-700">
                 <div className="font-semibold text-white">{phoneNumber}</div>
                 <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
             </div>
+            <div><a href={`https://admin.shopify.com/store/lazybut/orders/${orderid}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-emerald-100 hover:text-white underline"
+                >
+                View in Shopify →
+            </a>
+            </div>
 
+            {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
                 {messages.map((msg) => (
                     <div

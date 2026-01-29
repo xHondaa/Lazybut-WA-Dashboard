@@ -1,0 +1,77 @@
+
+Quick Wins
+
+ Search by customer name (not just phone and order number)
+ Add single unified search bar that filters across all fields
+ Show unread message count badge on each conversation
+ Mark conversations as resolved or archived
+ Show last message preview in conversations list (like WhatsApp)
+ Add date to message timestamps (show "Yesterday", "Jan 20" for older messages)
+
+Medium Effort
+
+ Filter conversations by order status (pending, confirmed, shipped, cancelled)
+ Export conversation to PDF or text file
+ Show typing indicator when sending messages
+ Add keyboard shortcuts (Enter to send, Cmd+K to search, arrows to navigate)
+ Show delivery receipts with checkmarks (sent, delivered, read)
+
+Bigger Features
+
+ Send images from dashboard (file upload button)
+ Bulk message sending (select multiple customers, send to all)
+ Canned responses (save frequently used messages, insert with click or slash command)
+ Customer notes (internal notes customers can't see)
+ Analytics dashboard (response time, messages per day, conversion rates)
+
+Performance Improvements
+
+ Add pagination on conversations list (Load More button for older conversations)
+ Lazy load messages (load recent first, older on scroll)
+ Add Firebase indexes on customer, order_number, timestamp fields for faster queries
+ Optimize real-time listeners to reduce Firebase read costs
+
+Technical Debt
+
+ Add proper Firebase Authentication (replace basic auth)
+ Standardize all order_number fields to same type (number vs string)
+ Download and store WhatsApp images permanently (URLs expire after a few hours)
+ Add error boundaries in React components
+ Add loading states for all async operations
+ Improve mobile responsiveness
+
+Nice to Have
+
+ Dark mode toggle
+ Sound notification for new messages
+ Multi-language support for dashboard UI
+ Message templates library (quick access to all templates)
+ Customer conversation history across multiple orders
+ Integration with Shopify admin (deep links to orders)
+
+ Detailed Version:
+ Quick wins:
+ Search by customer name, not just phone and order number. Add a single search bar that filters across all fields.
+ Show unread message count on each conversation. Add a badge with the number of messages you haven't seen yet.
+ Mark conversations as resolved or archived. Add a checkbox or button to hide completed orders from the main list.
+ Show last message preview in the conversations list. Like WhatsApp does - show the last message text under the order number.
+ Add message timestamps that show date when it's not today. Right now it only shows time, but "Yesterday" or "Jan 20" would be clearer for older messages.
+
+ Medium effort:
+ Filter by order status (pending, confirmed, shipped, cancelled). Add tabs or a dropdown at the top of the conversations list.
+ Export conversation to PDF or text file. Button to download the full chat history for a customer.
+ Show typing indicator when Railway is processing. When you send a message, show a subtle loading state until it's confirmed sent.
+ Add keyboard shortcuts. Enter to send, Cmd+K to search, arrow keys to navigate conversations.
+ Show delivery receipts with checkmarks. One checkmark for sent, two for delivered, blue for read (like WhatsApp does).
+
+ Bigger features:
+ Send images from the dashboard. Add a file upload button next to the text input.
+ Bulk message sending. Select multiple customers and send the same message to all.
+ Canned responses. Save frequently used messages and insert them with a click or slash command.
+ Customer notes. Add internal notes to conversations that customers can't see.
+ Analytics dashboard. Show metrics like response time, messages per day, conversion rates.
+
+ Performance improvements:
+ Pagination on conversations list. Right now you load 50, but add "Load More" for older conversations.
+ Lazy load messages. Only load recent messages when opening a chat, then load older ones on scroll.
+ Add indexes to Firebase for faster queries. Especially on customer, order_number, and timestamp fields.
