@@ -11,11 +11,9 @@ export default function Dashboard() {
     const [search, setSearch] = useState('');
     const [lastByOrder, setLastByOrder] = useState({});
     const [lastMessageByOrder, setLastMessageByOrder] = useState({});
-    const [lastVisible, setLastVisible] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [hasMore, setHasMore] = useState(true);
 
-    // Track latest message per order
+    // Track latest message per order - this runs globally
     useEffect(() => {
         const q = query(
             collection(db, 'whatsappMessages'),
@@ -63,52 +61,61 @@ export default function Dashboard() {
         return unsub;
     }, []);
 
-    const loadOrders = async (loadMore = false) => {
-        if (loading) return;
-        setLoading(true);
-
-        try {
-            let q;
-            if (loadMore && lastVisible) {
-                q = query(
-                    collection(db, 'orders'),
-                    orderBy('confirmation_sent_at', 'desc'),
-                    startAfter(lastVisible),
-                    limit(20)
-                );
-            } else {
-                q = query(
-                    collection(db, 'orders'),
-                    orderBy('confirmation_sent_at', 'desc'),
-                    limit(20)
-                );
-            }
-
-            const snapshot = await getDocs(q);
-
-            if (snapshot.empty) {
-                setHasMore(false);
-                setLoading(false);
-                return;
-            }
-
-            const newOrders = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-
-            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-            setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
-            setHasMore(snapshot.docs.length === 20);
-        } catch (error) {
-            console.error('Error loading orders:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
+    // Load ALL orders upfront, then we'll sort them by last message time
     useEffect(() => {
-        loadOrders();
+        const loadAllOrders = async () => {
+            setLoading(true);
+            const allOrders = [];
+            let lastDoc = null;
+            let hasMoreDocs = true;
+
+            try {
+                while (hasMoreDocs) {
+                    let q;
+                    if (lastDoc) {
+                        q = query(
+                            collection(db, 'orders'),
+                            orderBy('confirmation_sent_at', 'desc'),
+                            startAfter(lastDoc),
+                            limit(100)
+                        );
+                    } else {
+                        q = query(
+                            collection(db, 'orders'),
+                            orderBy('confirmation_sent_at', 'desc'),
+                            limit(100)
+                        );
+                    }
+
+                    const snapshot = await getDocs(q);
+
+                    if (snapshot.empty) {
+                        hasMoreDocs = false;
+                        break;
+                    }
+
+                    const newOrders = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+
+                    allOrders.push(...newOrders);
+                    lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+                    if (snapshot.docs.length < 100) {
+                        hasMoreDocs = false;
+                    }
+                }
+
+                setOrders(allOrders);
+            } catch (error) {
+                console.error('Error loading orders:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadAllOrders();
     }, []);
 
     const displayOrders = useMemo(() => {
@@ -130,6 +137,7 @@ export default function Dashboard() {
                 );
             })
             .sort((a, b) => {
+                // Sort by last message time first, then by order confirmation time
                 const aLast = lastByOrder[a.order_number] || toMillis(a.confirmation_sent_at);
                 const bLast = lastByOrder[b.order_number] || toMillis(b.confirmation_sent_at);
                 return bLast - aLast;
@@ -152,47 +160,38 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                {displayOrders.map(order => {
-                    const lastMsg = lastMessageByOrder[order.order_number];
-                    return (
-                        <div
-                            key={order.id}
-                            onClick={() => setSelectedOrder({
-                                id: order.id,
-                                order_id: order.order_id,
-                                order_number: order.order_number,
-                                phone_e164: order.phone_e164,
-                            })}
-                            className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
-                                selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
-                            }`}
-                        >
-                            <div className="font-semibold text-gray-900">{order.name || order.phone_e164}</div>
-                            <div className="text-sm text-gray-600">Order #{order.order_number} - {order.phone_e164}</div>
-                            {lastMsg && (
-                                <div className={`text-xs mt-1 truncate ${
-                                    lastMsg.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
-                                }`}>
-                                    {lastMsg.direction === 'outbound' && '✓ '}
-                                    {lastMsg.text}
-                                </div>
-                            )}
-                            <div className="text-xs text-gray-500 mt-1">{order.status}</div>
-                        </div>
-                    );
-                })}
-
-                {/* Load More Button */}
-                {hasMore && !search && (
-                    <div className="p-4">
-                        <button
-                            onClick={() => loadOrders(true)}
-                            disabled={loading}
-                            className="w-full py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 disabled:bg-gray-100 disabled:text-gray-400 transition-colors"
-                        >
-                            {loading ? 'Loading...' : 'Load More'}
-                        </button>
-                    </div>
+                {loading && orders.length === 0 ? (
+                    <div className="p-4 text-center text-gray-500">Loading conversations...</div>
+                ) : (
+                    displayOrders.map(order => {
+                        const lastMsg = lastMessageByOrder[order.order_number];
+                        return (
+                            <div
+                                key={order.id}
+                                onClick={() => setSelectedOrder({
+                                    id: order.id,
+                                    order_id: order.order_id,
+                                    order_number: order.order_number,
+                                    phone_e164: order.phone_e164,
+                                })}
+                                className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
+                                    selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
+                                }`}
+                            >
+                                <div className="font-semibold text-gray-900">{order.name || order.phone_e164}</div>
+                                <div className="text-sm text-gray-600">Order #{order.order_number}</div>
+                                {lastMsg && (
+                                    <div className={`text-xs mt-1 truncate ${
+                                        lastMsg.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
+                                    }`}>
+                                        {lastMsg.direction === 'outbound' && '✓ '}
+                                        {lastMsg.text}
+                                    </div>
+                                )}
+                                <div className="text-xs text-gray-500 mt-1">{order.status}</div>
+                            </div>
+                        );
+                    })
                 )}
             </div>
 

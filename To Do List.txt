@@ -76,3 +76,124 @@ Nice to Have
  Pagination on conversations list. Right now you load 50, but add "Load More" for older conversations.
  Lazy load messages. Only load recent messages when opening a chat, then load older ones on scroll.
  Add indexes to Firebase for faster queries. Especially on customer, order_number, and timestamp fields.
+
+-----------------------------------------------------------------------------
+
+To Add to the API Code
+
+Yes, you're right. Loading all orders upfront will cost more Firebase reads and take longer on initial load.
+
+**Better approach: Keep pagination but prioritize orders with recent messages**
+
+This is tricky because Firebase doesn't let you sort by a field that's in a different collection. Here are your realistic options:
+
+**Option 1: Update orders collection with last_message_at (RECOMMENDED)**
+
+When a message is sent/received, update the corresponding order document with a `last_message_at` timestamp. Then you can paginate AND sort correctly.
+
+In your Railway webhook handlers, after saving a message to Firebase:
+
+```javascript
+// After saving message to whatsappMessages collection
+await db.collection("orders")
+  .where("order_number", "==", orderNumber)
+  .limit(1)
+  .get()
+  .then(snapshot => {
+    if (!snapshot.empty) {
+      snapshot.docs[0].ref.update({
+        last_message_at: new Date()
+      });
+    }
+  });
+```
+
+Then in your Dashboard:
+
+```javascript
+const loadOrders = async (loadMore = false) => {
+  if (loading) return;
+  setLoading(true);
+
+  try {
+    let q;
+    if (loadMore && lastVisible) {
+      q = query(
+        collection(db, 'orders'),
+        orderBy('last_message_at', 'desc'), // Sort by last message time
+        startAfter(lastVisible),
+        limit(20)
+      );
+    } else {
+      q = query(
+        collection(db, 'orders'),
+        orderBy('last_message_at', 'desc'), // Sort by last message time
+        limit(20)
+      );
+    }
+
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      setHasMore(false);
+      setLoading(false);
+      return;
+    }
+
+    const newOrders = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+    setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
+    setHasMore(snapshot.docs.length === 20);
+  } catch (error) {
+    console.error('Error loading orders:', error);
+  } finally {
+    setLoading(false);
+  }
+};
+```
+
+**Option 2: Load first 100-200 orders (compromise)**
+
+Not all orders, but enough to catch most recent activity:
+
+```javascript
+useEffect(() => {
+  const loadOrders = async () => {
+    setLoading(true);
+    try {
+      const q = query(
+        collection(db, 'orders'),
+        orderBy('confirmation_sent_at', 'desc'),
+        limit(100) // First 100 orders
+      );
+
+      const snapshot = await getDocs(q);
+      const orderData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setOrders(orderData);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  loadOrders();
+}, []);
+```
+
+Then sort those 100 by last message time. Most active conversations will be in the first 100 orders anyway.
+
+**Option 3: Keep current code (simplest)**
+
+Your current setup works, users just need to press Load More if someone from page 2 messages. Not ideal UX but simplest solution.
+
+**I recommend Option 1.** It's the cleanest, scales well, and gives you proper sorting with pagination. You just need to update your Railway code to maintain the `last_message_at` field.
+
+Which approach do you want to go with?
+
+-----------------------------------------------------------------------------
