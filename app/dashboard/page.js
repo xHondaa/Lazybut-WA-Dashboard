@@ -58,39 +58,58 @@ export default function Dashboard() {
         setLoading(true);
 
         try {
-            // Load all orders, sorted by last_message_at if it exists, otherwise by confirmation_sent_at
-            let q;
+            let ordersWithMessages = [];
+            let ordersWithoutMessages = [];
+
+            // First, get orders sorted by last_message_at (orders with messages)
+            let qWithMessages;
             if (loadMore && lastVisible) {
-                q = query(
+                // When loading more, continue from where we left off
+                qWithMessages = query(
                     collection(db, 'orders'),
-                    orderBy('confirmation_sent_at', 'desc'),
+                    orderBy('last_message_at', 'desc'),
                     startAfter(lastVisible),
                     limit(20)
                 );
             } else {
-                q = query(
+                // Initial load - get orders with messages
+                qWithMessages = query(
                     collection(db, 'orders'),
-                    orderBy('confirmation_sent_at', 'desc'),
+                    orderBy('last_message_at', 'desc'),
                     limit(20)
                 );
             }
 
-            const snapshot = await getDocs(q);
-
-            if (snapshot.empty) {
-                setHasMore(false);
-                setLoading(false);
-                return;
-            }
-
-            const newOrders = snapshot.docs.map(doc => ({
+            const snapshotWithMessages = await getDocs(qWithMessages);
+            ordersWithMessages = snapshotWithMessages.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
 
-            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-            setOrders(prev => loadMore ? [...prev, ...newOrders] : newOrders);
-            setHasMore(snapshot.docs.length === 20);
+            // On initial load, if we got less than 20, fill with orders without messages
+            if (!loadMore && ordersWithMessages.length < 20) {
+                const qWithoutMessages = query(
+                    collection(db, 'orders'),
+                    where('last_message_at', '==', null),
+                    orderBy('confirmation_sent_at', 'desc'),
+                    limit(20 - ordersWithMessages.length)
+                );
+
+                const snapshotWithoutMessages = await getDocs(qWithoutMessages);
+                ordersWithoutMessages = snapshotWithoutMessages.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+            }
+
+            const allOrders = [...ordersWithMessages, ...ordersWithoutMessages];
+
+            if (snapshotWithMessages.docs.length > 0) {
+                setLastVisible(snapshotWithMessages.docs[snapshotWithMessages.docs.length - 1]);
+            }
+
+            setOrders(prev => loadMore ? [...prev, ...allOrders] : allOrders);
+            setHasMore(snapshotWithMessages.docs.length === 20);
         } catch (error) {
             console.error('Error loading orders:', error);
         } finally {
@@ -104,29 +123,17 @@ export default function Dashboard() {
     }, []);
 
     const displayOrders = useMemo(() => {
-        const toMillis = (ts) => {
-            if (!ts) return 0;
-            if (ts.toDate) return ts.toDate().getTime();
-            return new Date(ts).getTime() || 0;
-        };
-
-        return orders
-            .filter((o) => {
-                if (!search) return true;
-                const searchLower = search.toLowerCase();
-                return (
-                    (o.phone_e164 || '').includes(search) ||
-                    String(o.order_number || '').includes(search) ||
-                    (o.name || '').toLowerCase().includes(searchLower) ||
-                    (o.status || '').toLowerCase().includes(searchLower)
-                );
-            })
-            .sort((a, b) => {
-                // Sort by last_message_at if it exists, otherwise by confirmation_sent_at
-                const aLast = toMillis(a.last_message_at) || toMillis(a.confirmation_sent_at);
-                const bLast = toMillis(b.last_message_at) || toMillis(b.confirmation_sent_at);
-                return bLast - aLast;
-            });
+        return orders.filter((o) => {
+            if (!search) return true;
+            const searchLower = search.toLowerCase();
+            return (
+                (o.phone_e164 || '').includes(search) ||
+                String(o.order_number || '').includes(search) ||
+                (o.name || '').toLowerCase().includes(searchLower) ||
+                (o.status || '').toLowerCase().includes(searchLower)
+            );
+        });
+        // No sorting here - already sorted by Firebase query
     }, [orders, search]);
 
     return (
