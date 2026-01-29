@@ -133,7 +133,7 @@ export default function Dashboard() {
                             }`}
                         >
                             <div className="font-semibold text-gray-900">{order.name || order.phone_e164}</div>
-                            <div className="text-sm text-gray-600">Order #{order.order_number}</div>
+                            <div className="text-sm text-gray-600">Order #{order.order_number} - order.phone_e164</div>
                             {lastMsg && (
                                 <div className={`text-xs mt-1 truncate ${
                                     lastMsg.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
@@ -153,6 +153,7 @@ export default function Dashboard() {
                     <MessageThread
                         key={selectedOrder.order_number}
                         orderId={selectedOrder.id}
+                        shopifyId={selectedOrder.order_id}
                         orderNumber={selectedOrder.order_number}
                         phoneNumber={selectedOrder.phone_e164}
                     />
@@ -166,7 +167,7 @@ export default function Dashboard() {
     );
 }
 
-function MessageThread({ orderId, orderNumber, phoneNumber }) {
+function MessageThread({ shopifyId, orderNumber, phoneNumber }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
@@ -337,7 +338,7 @@ function MessageThread({ orderId, orderNumber, phoneNumber }) {
                     <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
                 </div>
                 <a
-                href={`https://admin.shopify.com/store/lazybut/orders/${orderId}`}
+                href={`https://admin.shopify.com/store/lazybut/orders/${shopifyId}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-emerald-100 hover:text-white underline"
