@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { collection, query, orderBy, onSnapshot, where, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getTemplateContent } from '@/lib/templates';
@@ -9,10 +9,11 @@ import { getTemplateContent } from '@/lib/templates';
 export default function Dashboard() {
     const [orders, setOrders] = useState([]);
     const [selectedOrder, setSelectedOrder] = useState(null);
-    const [searchPhone, setSearchPhone] = useState('');
-    const [searchOrder, setSearchOrder] = useState('');
+    const [search, setSearch] = useState(''); // Single search field
     const [lastByOrder, setLastByOrder] = useState({});
+    const [lastMessageByOrder, setLastMessageByOrder] = useState({}); // Store last message content
 
+    // Track latest message per order to sort conversations like WhatsApp
     useEffect(() => {
         const q = query(
             collection(db, 'whatsappMessages'),
@@ -21,6 +22,8 @@ export default function Dashboard() {
         );
         const unsub = onSnapshot(q, (snapshot) => {
             const updates = {};
+            const lastMessages = {};
+
             snapshot.docChanges().forEach((change) => {
                 if (change.type === 'removed') return;
                 const data = change.doc.data();
@@ -28,7 +31,18 @@ export default function Dashboard() {
                 if (!ord) return;
                 const ts = data.created_at?.toDate ? data.created_at.toDate().getTime() : new Date(data.timestamp).getTime();
                 if (!Number.isFinite(ts)) return;
+
+                // Track timestamp
                 updates[ord] = Math.max(updates[ord] || 0, ts);
+
+                // Track last message content
+                if (!lastMessages[ord] || ts > (lastMessages[ord].timestamp || 0)) {
+                    lastMessages[ord] = {
+                        text: data.text || (data.message_type === 'button' ? `🔘 ${data.button_title}` : (data.message_type === 'template' ? `📋 ${data.template_name}` : `[${data.message_type}]`)),
+                        timestamp: ts,
+                        direction: data.direction
+                    };
+                }
             });
             if (Object.keys(updates).length) {
                 setLastByOrder((prev) => {
@@ -38,6 +52,10 @@ export default function Dashboard() {
                     });
                     return next;
                 });
+            }
+
+            if (Object.keys(lastMessages).length) {
+                setLastMessageByOrder((prev) => ({ ...prev, ...lastMessages }));
             }
         });
         return unsub;
@@ -51,16 +69,21 @@ export default function Dashboard() {
         };
         return orders
             .filter((o) => {
-                const phoneOk = !searchPhone || (o.phone_e164 || '').includes(searchPhone);
-                const orderOk = !searchOrder || String(o.order_number || '').includes(searchOrder);
-                return phoneOk && orderOk;
+                if (!search) return true;
+                const searchLower = search.toLowerCase();
+                return (
+                    (o.phone_e164 || '').includes(search) ||
+                    String(o.order_number || '').includes(search) ||
+                    (o.name || '').toLowerCase().includes(searchLower) ||
+                    (o.status || '').toLowerCase().includes(searchLower)
+                );
             })
             .sort((a, b) => {
                 const aLast = lastByOrder[a.order_number] || toMillis(a.confirmation_sent_at);
                 const bLast = lastByOrder[b.order_number] || toMillis(b.confirmation_sent_at);
                 return bLast - aLast;
             });
-    }, [orders, searchPhone, searchOrder, lastByOrder]);
+    }, [orders, search, lastByOrder]);
 
     useEffect(() => {
         const q = query(
@@ -86,38 +109,43 @@ export default function Dashboard() {
             <div className="w-1/3 bg-white border-r border-gray-200 overflow-y-auto">
                 <div className="p-4 border-b border-gray-200 bg-emerald-600">
                     <h1 className="text-xl font-bold text-white">Conversations</h1>
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-3">
                         <input
-                            className="w-1/2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                            placeholder="Search phone"
-                            value={searchPhone}
-                            onChange={(e) => setSearchPhone(e.target.value)}
-                        />
-                        <input
-                            className="w-1/2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                            placeholder="Search order"
-                            value={searchOrder}
-                            onChange={(e) => setSearchOrder(e.target.value)}
+                            className="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                            placeholder="Search by name, phone, or order..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
                         />
                     </div>
                 </div>
-                {displayOrders.map(order => (
-                    <div
-                        key={order.id}
-                        onClick={() => setSelectedOrder({
-                            id: order.id,
-                            order_number: order.order_number,
-                            phone_e164: order.phone_e164,
-                        })}
-                        className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
-                            selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
-                        }`}
-                    >
-                        <div className="font-semibold text-gray-900">{order.phone_e164}</div>
-                        <div className="text-sm text-gray-600">Order #{order.order_number} - {order.name}</div>
-                        <div className="text-xs text-gray-500 mt-1">{order.status}</div>
-                    </div>
-                ))}
+                {displayOrders.map(order => {
+                    const lastMsg = lastMessageByOrder[order.order_number];
+                    return (
+                        <div
+                            key={order.id}
+                            onClick={() => setSelectedOrder({
+                                id: order.id,
+                                order_number: order.order_number,
+                                phone_e164: order.phone_e164,
+                            })}
+                            className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
+                                selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
+                            }`}
+                        >
+                            <div className="font-semibold text-gray-900">{order.name || order.phone_e164}</div>
+                            <div className="text-sm text-gray-600">Order #{order.order_number}</div>
+                            {lastMsg && (
+                                <div className={`text-xs mt-1 truncate ${
+                                    lastMsg.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
+                                }`}>
+                                    {lastMsg.direction === 'outbound' && '✓ '}
+                                    {lastMsg.text}
+                                </div>
+                            )}
+                            <div className="text-xs text-gray-500 mt-1">{order.status}</div>
+                        </div>
+                    );
+                })}
             </div>
 
             {/* Message thread */}
@@ -143,6 +171,15 @@ function MessageThread({ orderId, orderNumber, phoneNumber }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
+    const messagesEndRef = useRef(null);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
 
     useEffect(() => {
         if (!orderNumber) return;
@@ -295,17 +332,19 @@ function MessageThread({ orderId, orderNumber, phoneNumber }) {
     return (
         <>
             {/* Header */}
-            <div className="p-4 bg-emerald-600 border-b border-emerald-700">
-                <div className="font-semibold text-white">{phoneNumber}</div>
-                <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
-            </div>
-            <div><a href={`https://admin.shopify.com/store/lazybut/orders/${orderid}`}
+            <div className="p-4 bg-emerald-600 border-b border-emerald-700 flex justify-between items-center">
+                <div>
+                    <div className="font-semibold text-white">{phoneNumber}</div>
+                    <div className="text-sm text-emerald-100">Order #{orderNumber}</div>
+                </div>
+                <a
+                href={`https://admin.shopify.com/store/lazybut/orders/${orderId}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-emerald-100 hover:text-white underline"
                 >
                 View in Shopify →
-            </a>
+                </a>
             </div>
 
             {/* Messages */}
@@ -340,6 +379,7 @@ function MessageThread({ orderId, orderNumber, phoneNumber }) {
                         </div>
                     </div>
                 ))}
+                <div ref={messagesEndRef} />
             </div>
 
             {/* Message input */}
