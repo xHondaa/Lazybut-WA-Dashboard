@@ -208,7 +208,7 @@ export default function Dashboard() {
                                 }`}
                             >
                                 <div className="font-semibold text-gray-900">{order.name || order.phone_e164}</div>
-                                <div className="text-sm text-gray-600">Order #{order.order_number}</div>
+                                <div className="text-sm text-gray-600">Order #{order.order_number} - {order.phone_e164}</div>
                                 {lastMsg && (
                                     <div className={`text-xs mt-1 truncate ${
                                         lastMsg.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'

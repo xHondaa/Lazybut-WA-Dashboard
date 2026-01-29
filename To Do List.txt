@@ -12,8 +12,8 @@ Quick Wins
 Medium Effort
 
  Filter conversations by order status (pending, confirmed, shipped, cancelled)
- Export conversation to PDF or text file
- Show typing indicator when sending messages
+ xx Export conversation to PDF or text file
+ xx Show typing indicator when sending messages
  Show delivery receipts with checkmarks (sent, delivered, read)
 
 Bigger Features
@@ -48,7 +48,7 @@ Nice to Have
  Multi-language support for dashboard UI
  Message templates library (quick access to all templates)
  Customer conversation history across multiple orders
- Integration with Shopify admin (deep links to orders)
+ // Integration with Shopify admin (deep links to orders)
 
  Detailed Version:
  Quick wins:
