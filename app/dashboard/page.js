@@ -622,8 +622,8 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                                 msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
                             }`}>
                                 {msg.created_at?.toDate
-                                    ? msg.created_at.toDate().toLocaleTimeString()
-                                    : new Date(msg.timestamp).toLocaleTimeString()}
+                                    ? msg.created_at.toDate().toLocaleTimeString('en-US')
+                                    : new Date(msg.timestamp).toLocaleTimeString('en-US')}
                             </div>
                             {msg.direction === 'outbound' && msg.status && (
                                 <div className="text-xs mt-1 text-emerald-100 capitalize">
