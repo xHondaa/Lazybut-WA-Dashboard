@@ -114,7 +114,7 @@ export default function Dashboard() {
                         }`}
                     >
                         <div className="font-semibold text-gray-900">{order.phone_e164}</div>
-                        <div className="text-sm text-gray-600">Order #{order.order_number}</div>
+                        <div className="text-sm text-gray-600">Order #{order.order_number} - {order.name}</div>
                         <div className="text-xs text-gray-500 mt-1">{order.status}</div>
                     </div>
                 ))}
