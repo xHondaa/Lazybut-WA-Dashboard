@@ -274,7 +274,9 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
 
     // Load initial messages (most recent 50)
     useEffect(() => {
+        if (!orderNumber && !customer) return;
 
+        // Handle unassigned messages (no order number)
         if (customer && !orderNumber) {
             const q = query(
                 collection(db, 'whatsappMessages'),
@@ -290,14 +292,13 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                     .reverse();
 
                 setMessages(messageData);
-                setTimeout(scrollToBottom, 100);
+                setTimeout(() => scrollToBottom(), 200); // Increased delay
             });
 
             return () => unsub();
         }
 
-        if (!orderNumber) return;
-
+        // Handle messages with order number
         const qNum = query(
             collection(db, 'whatsappMessages'),
             where('order_number', '==', Number(orderNumber)),
@@ -330,7 +331,7 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
             }
             setHasMoreMessages(snapshot.docs.length === 50);
 
-            setTimeout(scrollToBottom, 100);
+            setTimeout(() => scrollToBottom(), 200); // Increased delay
         });
 
         const unsubStr = onSnapshot(qStr, (snapshot) => {
@@ -344,6 +345,7 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
             });
 
             setMessages(sorted);
+            setTimeout(() => scrollToBottom(), 200); // Increased delay
         });
 
         return () => {
@@ -351,6 +353,13 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
             unsubStr();
         };
     }, [orderNumber, customer]);
+
+// Also scroll when new messages are added
+    useEffect(() => {
+        if (messages.length > 0) {
+            scrollToBottom();
+        }
+    }, [messages.length]);
 
     // Load older messages when scrolling to top
     const loadOlderMessages = async () => {
