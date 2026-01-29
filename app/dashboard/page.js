@@ -466,6 +466,42 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                 </div>
             );
         }
+
+        // Handle videos
+        if (msg.message_type === 'video') {
+            const videoUrl = msg.raw?.video?.url;
+
+            if (!videoUrl) {
+                return `🎥 [Video - no URL found]`;
+            }
+
+            const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
+            const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(videoUrl)}`;
+
+            return (
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        🎥 <span className="text-xs">Video</span>
+                    </div>
+                    <video
+                        controls
+                        className="rounded max-w-full"
+                        style={{ maxHeight: '400px' }}
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'block';
+                        }}
+                    >
+                        <source src={proxiedUrl} type="video/mp4" />
+                        Your browser does not support video playback.
+                    </video>
+                    <div style={{display: 'none'}} className="text-sm text-gray-500">
+                        Video unavailable
+                    </div>
+                </div>
+            );
+        }
+
         // Handle button clicks
         if (msg.message_type === 'button' && msg.button_title) {
             return `🔘 ${msg.button_title}`;
