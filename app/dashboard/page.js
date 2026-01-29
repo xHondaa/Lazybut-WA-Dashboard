@@ -147,7 +147,6 @@ export default function Dashboard() {
                     );
                 })}
             </div>
-
             {/* Message thread */}
             <div className="w-2/3 flex flex-col bg-gray-50">
                 {selectedOrder ? (
