@@ -6,135 +6,122 @@ import { db } from '@/lib/firebase';
 import { getTemplateContent } from '@/lib/templates';
 
 export default function Dashboard() {
-    const [orders, setOrders] = useState([]);
-    const [unassignedCustomers, setUnassignedCustomers] = useState([]); // Add this
-    const [selectedOrder, setSelectedOrder] = useState(null);
+    const [conversations, setConversations] = useState([]); // Changed from orders to conversations
+    const [selectedConversation, setSelectedConversation] = useState(null);
     const [search, setSearch] = useState('');
-    const [lastByOrder, setLastByOrder] = useState({});
-    const [lastMessageByOrder, setLastMessageByOrder] = useState({});
-    const [lastVisible, setLastVisible] = useState(null);
+    const [lastByPhone, setLastByPhone] = useState({});
+    const [lastMessageByPhone, setLastMessageByPhone] = useState({});
     const [loading, setLoading] = useState(false);
-    const [hasMore, setHasMore] = useState(true);
 
-    // Track unassigned messages (no order_number)
+    // Track all messages and group by phone number
     useEffect(() => {
         const q = query(
             collection(db, 'whatsappMessages'),
-            where('order_number', '==', null),
             orderBy('timestamp', 'desc'),
-            limit(50)
+            limit(200)
         );
 
         const unsub = onSnapshot(q, (snapshot) => {
-            const customerMap = {};
+            const phoneMap = {};
 
-            snapshot.docs.forEach(doc => {
+            snapshot.docs.forEach((doc) => {
                 const data = doc.data();
-                const customer = data.customer;
-                if (!customer) return;
+                const phone = data.customer;
+                if (!phone) return;
 
                 const ts = data.created_at?.toDate ? data.created_at.toDate().getTime() : new Date(data.timestamp).getTime();
+                if (!Number.isFinite(ts)) return;
 
-                if (!customerMap[customer] || ts > customerMap[customer].timestamp) {
-                    customerMap[customer] = {
-                        customer: customer,
-                        phone_e164: `+${customer}`,
-                        lastMessage: data.text || (data.message_type === 'button' ? `🔘 ${data.button_title}` : (data.message_type === 'template' ? `📋 ${data.template_name}` : `[${data.message_type}]`)),
+                // Track latest message time per phone
+                if (!phoneMap[phone] || ts > phoneMap[phone].timestamp) {
+                    phoneMap[phone] = {
                         timestamp: ts,
-                        direction: data.direction
+                        text: data.text || (data.message_type === 'button' ? `🔘 ${data.button_title}` : (data.message_type === 'template' ? `📋 ${data.template_name}` : (data.message_type === 'image' ? '📷 Image' : (data.message_type === 'video' ? '🎥 Video' : (data.message_type === 'audio' || data.message_type === 'voice' ? '🎤 Voice message' : `[${data.message_type}]`))))),
+                        direction: data.direction,
+                        order_number: data.order_number
                     };
                 }
             });
 
-            setUnassignedCustomers(Object.values(customerMap).sort((a, b) => b.timestamp - a.timestamp));
+            setLastByPhone(Object.fromEntries(
+                Object.entries(phoneMap).map(([phone, data]) => [phone, data.timestamp])
+            ));
+            setLastMessageByPhone(phoneMap);
         });
 
         return unsub;
     }, []);
 
-    // Load orders function
-    const loadOrders = async (loadMore = false) => {
-        if (loading) return;
-        setLoading(true);
-
-        try {
-            let ordersWithMessages = [];
-            let ordersWithoutMessages = [];
-
-            // First, get orders sorted by last_message_at (orders with messages)
-            let qWithMessages;
-            if (loadMore && lastVisible) {
-                // When loading more, continue from where we left off
-                qWithMessages = query(
+    // Load all orders and group by phone
+    useEffect(() => {
+        const loadOrders = async () => {
+            setLoading(true);
+            try {
+                const q = query(
                     collection(db, 'orders'),
-                    orderBy('last_message_at', 'desc'),
-                    startAfter(lastVisible),
-                    limit(20)
-                );
-            } else {
-                // Initial load - get orders with messages
-                qWithMessages = query(
-                    collection(db, 'orders'),
-                    orderBy('last_message_at', 'desc'),
-                    limit(20)
-                );
-            }
-
-            const snapshotWithMessages = await getDocs(qWithMessages);
-            ordersWithMessages = snapshotWithMessages.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-
-            // On initial load, if we got less than 20, fill with orders without messages
-            if (!loadMore && ordersWithMessages.length < 20) {
-                const qWithoutMessages = query(
-                    collection(db, 'orders'),
-                    where('last_message_at', '==', null),
                     orderBy('confirmation_sent_at', 'desc'),
-                    limit(20 - ordersWithMessages.length)
+                    limit(500) // Load a lot to ensure we get all unique phones
                 );
 
-                const snapshotWithoutMessages = await getDocs(qWithoutMessages);
-                ordersWithoutMessages = snapshotWithoutMessages.docs.map(doc => ({
+                const snapshot = await getDocs(q);
+                const orders = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
                 }));
+
+                // Group orders by phone number
+                const phoneGroups = {};
+                orders.forEach(order => {
+                    const phone = order.phone_e164?.replace('+', '');
+                    if (!phone) return;
+
+                    if (!phoneGroups[phone]) {
+                        phoneGroups[phone] = {
+                            phone: phone,
+                            phone_e164: order.phone_e164,
+                            name: order.name,
+                            orders: [],
+                            latestOrder: order
+                        };
+                    }
+                    phoneGroups[phone].orders.push(order);
+                });
+
+                setConversations(Object.values(phoneGroups));
+            } catch (error) {
+                console.error('Error loading orders:', error);
+            } finally {
+                setLoading(false);
             }
+        };
 
-            const allOrders = [...ordersWithMessages, ...ordersWithoutMessages];
-
-            if (snapshotWithMessages.docs.length > 0) {
-                setLastVisible(snapshotWithMessages.docs[snapshotWithMessages.docs.length - 1]);
-            }
-
-            setOrders(prev => loadMore ? [...prev, ...allOrders] : allOrders);
-            setHasMore(snapshotWithMessages.docs.length === 20);
-        } catch (error) {
-            console.error('Error loading orders:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Load initial orders
-    useEffect(() => {
         loadOrders();
     }, []);
 
-    const displayOrders = useMemo(() => {
-        return orders.filter((o) => {
-            if (!search) return true;
-            const searchLower = search.toLowerCase();
-            return (
-                (o.phone_e164 || '').includes(search) ||
-                String(o.order_number || '').includes(search) ||
-                (o.name || '').toLowerCase().includes(searchLower) ||
-                (o.status || '').toLowerCase().includes(searchLower)
-            );
-        });
-        // No sorting here - already sorted by Firebase query
-    }, [orders, search]);
+    const displayConversations = useMemo(() => {
+        const toMillis = (ts) => {
+            if (!ts) return 0;
+            if (ts.toDate) return ts.toDate().getTime();
+            return new Date(ts).getTime() || 0;
+        };
+
+        return conversations
+            .filter((conv) => {
+                if (!search) return true;
+                const searchLower = search.toLowerCase();
+                return (
+                    (conv.phone_e164 || '').includes(search) ||
+                    (conv.name || '').toLowerCase().includes(searchLower) ||
+                    conv.orders.some(o => String(o.order_number || '').includes(search))
+                );
+            })
+            .sort((a, b) => {
+                // Sort by last message time if exists, otherwise by latest order
+                const aLast = lastByPhone[a.phone] || toMillis(a.latestOrder.confirmation_sent_at);
+                const bLast = lastByPhone[b.phone] || toMillis(b.latestOrder.confirmation_sent_at);
+                return bLast - aLast;
+            });
+    }, [conversations, search, lastByPhone]);
 
     return (
         <div className="flex h-screen bg-gray-50">
@@ -152,63 +139,23 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                {/* Unassigned Messages Section */}
-                {!search && unassignedCustomers.length > 0 && (
-                    <>
-                        <div className="p-2 bg-amber-50 border-b border-amber-200">
-                            <div className="text-xs font-semibold text-amber-800 px-2">Unassigned Messages</div>
-                        </div>
-                        {unassignedCustomers.map(customer => (
-                            <div
-                                key={customer.customer}
-                                onClick={() => setSelectedOrder({
-                                    id: null,
-                                    order_id: null,
-                                    order_number: null,
-                                    phone_e164: customer.phone_e164,
-                                    customer: customer.customer,
-                                })}
-                                className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
-                                    selectedOrder?.customer === customer.customer ? 'bg-emerald-50' : ''
-                                }`}
-                            >
-                                <div className="font-semibold text-gray-900">{customer.phone_e164}</div>
-                                <div className="text-sm text-amber-600">No order assigned</div>
-                                <div className={`text-xs mt-1 truncate ${
-                                    customer.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
-                                }`}>
-                                    {customer.direction === 'outbound' && '✓ '}
-                                    {customer.lastMessage}
-                                </div>
-                            </div>
-                        ))}
-                        <div className="p-2 bg-gray-100 border-b border-gray-200">
-                            <div className="text-xs font-semibold text-gray-600 px-2">Orders</div>
-                        </div>
-                    </>
-                )}
-
-                {loading && orders.length === 0 ? (
+                {loading ? (
                     <div className="p-4 text-center text-gray-500">Loading conversations...</div>
                 ) : (
-                    displayOrders.map(order => {
-                        const lastMsg = lastMessageByOrder[order.order_number];
+                    displayConversations.map(conv => {
+                        const lastMsg = lastMessageByPhone[conv.phone];
                         return (
                             <div
-                                key={order.id}
-                                onClick={() => setSelectedOrder({
-                                    id: order.id,
-                                    order_id: order.order_id,
-                                    order_number: order.order_number,
-                                    phone_e164: order.phone_e164,
-                                    customer: null,
-                                })}
+                                key={conv.phone}
+                                onClick={() => setSelectedConversation(conv)}
                                 className={`p-4 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
-                                    selectedOrder?.order_number === order.order_number ? 'bg-emerald-50' : ''
+                                    selectedConversation?.phone === conv.phone ? 'bg-emerald-50' : ''
                                 }`}
                             >
-                                <div className="font-semibold text-gray-900">{order.name || order.phone_e164}</div>
-                                <div className="text-sm text-gray-600">Order #{order.order_number} - {order.phone_e164}</div>
+                                <div className="font-semibold text-gray-900">{conv.name || conv.phone_e164}</div>
+                                <div className="text-sm text-gray-600">
+                                    {conv.orders.length} order{conv.orders.length > 1 ? 's' : ''} • {conv.phone_e164}
+                                </div>
                                 {lastMsg && (
                                     <div className={`text-xs mt-1 truncate ${
                                         lastMsg.direction === 'outbound' ? 'text-gray-500' : 'text-gray-700 font-medium'
@@ -217,36 +164,18 @@ export default function Dashboard() {
                                         {lastMsg.text}
                                     </div>
                                 )}
-                                <div className="text-xs text-gray-500 mt-1">{order.status}</div>
                             </div>
                         );
                     })
-                )}
-
-                {/* Load More Button */}
-                {hasMore && !search && (
-                    <div className="p-4">
-                        <button
-                            onClick={() => loadOrders(true)}
-                            disabled={loading}
-                            className="w-full py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 disabled:bg-gray-100 disabled:text-gray-400 transition-colors"
-                        >
-                            {loading ? 'Loading...' : 'Load More'}
-                        </button>
-                    </div>
                 )}
             </div>
 
             {/* Message thread */}
             <div className="w-2/3 flex flex-col bg-gray-50">
-                {selectedOrder ? (
+                {selectedConversation ? (
                     <MessageThread
-                        key={selectedOrder.order_number || selectedOrder.customer}
-                        orderId={selectedOrder.id}
-                        shopifyId={selectedOrder.order_id}
-                        orderNumber={selectedOrder.order_number}
-                        phoneNumber={selectedOrder.phone_e164}
-                        customer={selectedOrder.customer}
+                        key={selectedConversation.phone}
+                        conversation={selectedConversation}
                     />
                 ) : (
                     <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -258,168 +187,46 @@ export default function Dashboard() {
     );
 }
 
-function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }) {
+function MessageThread({ conversation }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
     const messagesEndRef = useRef(null);
-    const messagesContainerRef = useRef(null);
-    const [loadingOlder, setLoadingOlder] = useState(false);
-    const [hasMoreMessages, setHasMoreMessages] = useState(true);
-    const [oldestMessage, setOldestMessage] = useState(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-    // Load initial messages (most recent 50)
+    // Load all messages for this phone number
     useEffect(() => {
-        if (!orderNumber && !customer) return;
+        if (!conversation?.phone) return;
 
-        // Handle unassigned messages (no order number)
-        if (customer && !orderNumber) {
-            const q = query(
-                collection(db, 'whatsappMessages'),
-                where('customer', '==', customer),
-                where('order_number', '==', null),
-                orderBy('timestamp', 'desc'),
-                limit(50)
-            );
-
-            const unsub = onSnapshot(q, (snapshot) => {
-                const messageData = snapshot.docs
-                    .map(doc => ({ id: doc.id, ...doc.data() }))
-                    .reverse();
-
-                setMessages(messageData);
-                setTimeout(() => scrollToBottom(), 200); // Increased delay
-            });
-
-            return () => unsub();
-        }
-
-        // Handle messages with order number
-        const qNum = query(
+        const q = query(
             collection(db, 'whatsappMessages'),
-            where('order_number', '==', Number(orderNumber)),
-            orderBy('timestamp', 'desc'),
-            limit(50)
+            where('customer', '==', conversation.phone),
+            orderBy('timestamp', 'asc')
         );
 
-        const qStr = query(
-            collection(db, 'whatsappMessages'),
-            where('order_number', '==', String(orderNumber)),
-            orderBy('timestamp', 'desc'),
-            limit(50)
-        );
-
-        let allMessages = [];
-
-        const unsubNum = onSnapshot(qNum, (snapshot) => {
-            const numMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            allMessages = [...allMessages.filter(m => !numMessages.find(nm => nm.id === m.id)), ...numMessages];
-
-            const sorted = allMessages.sort((a, b) => {
-                const aTime = new Date(a.timestamp).getTime();
-                const bTime = new Date(b.timestamp).getTime();
-                return aTime - bTime;
-            });
-
-            setMessages(sorted);
-            if (snapshot.docs.length > 0) {
-                setOldestMessage(snapshot.docs[snapshot.docs.length - 1]);
-            }
-            setHasMoreMessages(snapshot.docs.length === 50);
-
-            setTimeout(() => scrollToBottom(), 200); // Increased delay
+        const unsub = onSnapshot(q, (snapshot) => {
+            const messageData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setMessages(messageData);
+            setTimeout(() => scrollToBottom(), 200);
         });
 
-        const unsubStr = onSnapshot(qStr, (snapshot) => {
-            const strMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            allMessages = [...allMessages.filter(m => !strMessages.find(sm => sm.id === m.id)), ...strMessages];
+        return () => unsub();
+    }, [conversation?.phone]);
 
-            const sorted = allMessages.sort((a, b) => {
-                const aTime = new Date(a.timestamp).getTime();
-                const bTime = new Date(b.timestamp).getTime();
-                return aTime - bTime;
-            });
-
-            setMessages(sorted);
-            setTimeout(() => scrollToBottom(), 200); // Increased delay
-        });
-
-        return () => {
-            unsubNum();
-            unsubStr();
-        };
-    }, [orderNumber, customer]);
-
-// Also scroll when new messages are added
     useEffect(() => {
         if (messages.length > 0) {
             scrollToBottom();
         }
     }, [messages.length]);
 
-    // Load older messages when scrolling to top
-    const loadOlderMessages = async () => {
-        if (!oldestMessage || loadingOlder || !hasMoreMessages) return;
-
-        setLoadingOlder(true);
-
-        try {
-            const q = query(
-                collection(db, 'whatsappMessages'),
-                where('order_number', '==', Number(orderNumber)),
-                orderBy('timestamp', 'desc'),
-                startAfter(oldestMessage),
-                limit(30)
-            );
-
-            const snapshot = await getDocs(q);
-
-            if (snapshot.empty) {
-                setHasMoreMessages(false);
-                setLoadingOlder(false);
-                return;
-            }
-
-            const olderMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-            setMessages(prev => {
-                const combined = [...olderMessages, ...prev];
-                return combined.sort((a, b) => {
-                    const aTime = new Date(a.timestamp).getTime();
-                    const bTime = new Date(b.timestamp).getTime();
-                    return aTime - bTime;
-                });
-            });
-
-            setOldestMessage(snapshot.docs[snapshot.docs.length - 1]);
-            setHasMoreMessages(snapshot.docs.length === 30);
-        } catch (error) {
-            console.error('Error loading older messages:', error);
-        } finally {
-            setLoadingOlder(false);
-        }
-    };
-
-    // Detect scroll to top
-    const handleScroll = (e) => {
-        const container = e.target;
-        if (container.scrollTop === 0 && hasMoreMessages) {
-            loadOlderMessages();
-        }
-    };
-
     const getMessageContent = (msg) => {
         // Handle images
         if (msg.message_type === 'image') {
             const imageUrl = msg.raw?.image?.url;
-
-            if (!imageUrl) {
-                return `📷 [Image - no URL found]`;
-            }
+            if (!imageUrl) return `📷 [Image - no URL found]`;
 
             const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
             const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(imageUrl)}`;
@@ -435,19 +242,15 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                             e.target.nextSibling.style.display = 'block';
                         }}
                     />
-                    <div style={{display: 'none'}} className="text-sm text-gray-500">
-                        Image unavailable
-                    </div>
+                    <div style={{display: 'none'}} className="text-sm text-gray-500">Image unavailable</div>
                 </div>
             );
         }
-        // Handle audio/voice messages
+
+        // Handle audio/voice
         if (msg.message_type === 'audio' || msg.message_type === 'voice') {
             const audioUrl = msg.raw?.audio?.url || msg.raw?.voice?.url;
-
-            if (!audioUrl) {
-                return `🎤 [Voice message - no URL found]`;
-            }
+            if (!audioUrl) return `🎤 [Voice message - no URL found]`;
 
             const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
             const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(audioUrl)}`;
@@ -457,21 +260,10 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                     <div className="flex items-center gap-2 mb-1">
                         🎤 <span className="text-xs">Voice message</span>
                     </div>
-                    <audio
-                        controls
-                        className="max-w-full"
-                        onError={(e) => {
-                            e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'block';
-                        }}
-                    >
+                    <audio controls className="max-w-full">
                         <source src={proxiedUrl} type="audio/ogg" />
                         <source src={proxiedUrl} type="audio/mpeg" />
-                        Your browser does not support audio playback.
                     </audio>
-                    <div style={{display: 'none'}} className="text-sm text-gray-500">
-                        Audio unavailable
-                    </div>
                 </div>
             );
         }
@@ -479,10 +271,7 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
         // Handle videos
         if (msg.message_type === 'video') {
             const videoUrl = msg.raw?.video?.url;
-
-            if (!videoUrl) {
-                return `🎥 [Video - no URL found]`;
-            }
+            if (!videoUrl) return `🎥 [Video - no URL found]`;
 
             const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
             const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(videoUrl)}`;
@@ -492,21 +281,9 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                     <div className="flex items-center gap-2 mb-1">
                         🎥 <span className="text-xs">Video</span>
                     </div>
-                    <video
-                        controls
-                        className="rounded max-w-full"
-                        style={{ maxHeight: '400px' }}
-                        onError={(e) => {
-                            e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'block';
-                        }}
-                    >
+                    <video controls className="rounded max-w-full" style={{ maxHeight: '400px' }}>
                         <source src={proxiedUrl} type="video/mp4" />
-                        Your browser does not support video playback.
                     </video>
-                    <div style={{display: 'none'}} className="text-sm text-gray-500">
-                        Video unavailable
-                    </div>
                 </div>
             );
         }
@@ -526,13 +303,11 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
             return msg.text;
         }
 
-        // Fallback
         return `[${msg.message_type || 'Unknown message type'}]`;
     };
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-
         if (!newMessage.trim() || sending) return;
 
         setSending(true);
@@ -540,20 +315,15 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
         try {
             const response = await fetch('/api/send-message', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    phone: phoneNumber,
+                    phone: conversation.phone_e164,
                     message: newMessage,
-                    order_number: orderNumber
+                    order_number: conversation.orders[0]?.order_number || null
                 })
             });
 
-            if (!response.ok) {
-                throw new Error('Failed to send message');
-            }
-
+            if (!response.ok) throw new Error('Failed to send message');
             setNewMessage('');
         } catch (error) {
             console.error('Error sending message:', error);
@@ -566,50 +336,18 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
     return (
         <>
             {/* Header */}
-            <div className="p-4 bg-emerald-600 border-b border-emerald-700 flex justify-between items-center">
-                <div>
-                    <div className="font-semibold text-white">{phoneNumber}</div>
-                    {orderNumber ? (
-                        <div className="text-sm text-emerald-100">
-                            Order #{orderNumber}
-                        </div>
-                    ) : (
-                        <div className="text-sm text-amber-200">
-                            No order assigned
-                        </div>
-                    )}
+            <div className="p-4 bg-emerald-600 border-b border-emerald-700">
+                <div className="font-semibold text-white">{conversation.name || conversation.phone_e164}</div>
+                <div className="text-sm text-emerald-100">{conversation.phone_e164}</div>
+                <div className="text-xs text-emerald-200 mt-1">
+                    Orders: {conversation.orders.map(o => `#${o.order_number}`).join(', ')}
                 </div>
-
-                {shopifyId && (
-                    <a
-                        href={`https://admin.shopify.com/store/lazybut/orders/${shopifyId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-emerald-100 hover:text-white underline"
-                    >
-                        View in Shopify →
-                    </a>
-                )}
             </div>
 
-
             {/* Messages */}
-            <div
-                ref={messagesContainerRef}
-                onScroll={handleScroll}
-                className="flex-1 overflow-y-auto p-4 bg-gray-50"
-            >
-                {loadingOlder && (
-                    <div className="text-center py-2 text-gray-500 text-sm">
-                        Loading older messages...
-                    </div>
-                )}
-
+            <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
                 {messages.map((msg) => (
-                    <div
-                        key={msg.id}
-                        className={`mb-3 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
-                    >
+                    <div key={msg.id} className={`mb-3 flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-xs px-4 py-2 rounded-lg shadow-sm ${
                             msg.direction === 'outbound'
                                 ? 'bg-emerald-500 text-white'
@@ -618,17 +356,11 @@ function MessageThread({orderId, shopifyId, orderNumber, phoneNumber, customer }
                                     : 'bg-white text-gray-800 border border-gray-200'
                         }`}>
                             <div className="break-words">{getMessageContent(msg)}</div>
-                            <div className={`text-xs mt-1 ${
-                                msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'
-                            }`}>
-                                {msg.created_at?.toDate
-                                    ? msg.created_at.toDate().toLocaleTimeString('en-US')
-                                    : new Date(msg.timestamp).toLocaleTimeString('en-US')}
+                            <div className={`text-xs mt-1 ${msg.direction === 'outbound' ? 'text-emerald-100' : 'text-gray-500'}`}>
+                                {new Date(msg.timestamp).toLocaleTimeString('en-US')}
                             </div>
                             {msg.direction === 'outbound' && msg.status && (
-                                <div className="text-xs mt-1 text-emerald-100 capitalize">
-                                    {msg.status}
-                                </div>
+                                <div className="text-xs mt-1 text-emerald-100 capitalize">{msg.status}</div>
                             )}
                         </div>
                     </div>
