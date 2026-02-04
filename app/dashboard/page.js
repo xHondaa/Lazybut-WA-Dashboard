@@ -31,32 +31,15 @@ export default function Dashboard() {
         const unsub = onSnapshot(q, (snapshot) => {
             const phoneMap = {};
 
-            snapshot.docChanges().forEach((change) => {
-                const data = change.doc.data();
+            // Process ALL docs, not just changes
+            snapshot.docs.forEach((doc) => {
+                const data = doc.data();
                 const phone = data.customer;
                 if (!phone) return;
-                // Send browser notification for new inbound messages
-                if (change.type === 'added' && data.direction === 'inbound') {
-                    if ('Notification' in window && Notification.permission === 'granted') {
-                        const messageText = data.text ||
-                            (data.message_type === 'button' ? `🔘 ${data.button_title}` :
-                                (data.message_type === 'image' ? '📷 Image' :
-                                    (data.message_type === 'video' ? '🎥 Video' :
-                                        (data.message_type === 'audio' || data.message_type === 'voice' ? '🎤 Voice message' :
-                                            `[${data.message_type}]`))));
-
-                        new Notification('New WhatsApp Message', {
-                            body: `From +${phone}: ${messageText.substring(0, 100)}`,
-                            icon: '/whatsapp-icon.png',
-                            tag: phone,
-                        });
-                    }
-                }
 
                 const ts = data.created_at?.toDate ? data.created_at.toDate().getTime() : new Date(data.timestamp).getTime();
                 if (!Number.isFinite(ts)) return;
 
-                // Track latest message time per phone
                 if (!phoneMap[phone] || ts > phoneMap[phone].timestamp) {
                     phoneMap[phone] = {
                         timestamp: ts,
@@ -64,6 +47,31 @@ export default function Dashboard() {
                         direction: data.direction,
                         order_number: data.order_number
                     };
+                }
+            });
+
+            // Send browser notifications for NEW inbound messages only
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added') {
+                    const data = change.doc.data();
+
+                    if (data.direction === 'inbound') {
+                        if ('Notification' in window && Notification.permission === 'granted') {
+                            const phone = data.customer;
+                            const messageText = data.text ||
+                                (data.message_type === 'button' ? `🔘 ${data.button_title}` :
+                                    (data.message_type === 'image' ? '📷 Image' :
+                                        (data.message_type === 'video' ? '🎥 Video' :
+                                            (data.message_type === 'audio' || data.message_type === 'voice' ? '🎤 Voice message' :
+                                                `[${data.message_type}]`))));
+
+                            new Notification('New WhatsApp Message', {
+                                body: `From +${phone}: ${messageText.substring(0, 100)}`,
+                                icon: '/whatsapp-icon.png',
+                                tag: phone,
+                            });
+                        }
+                    }
                 }
             });
 
