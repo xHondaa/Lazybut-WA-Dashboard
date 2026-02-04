@@ -233,19 +233,59 @@ function MessageThread({ conversation }) {
     useEffect(() => {
         if (!conversation?.phone) return;
 
-        const q = query(
+        // Query for messages with customer field (with or without +)
+        const qWithoutPlus = query(
             collection(db, 'whatsappMessages'),
             where('customer', '==', conversation.phone),
             orderBy('timestamp', 'asc')
         );
 
-        const unsub = onSnapshot(q, (snapshot) => {
-            const messageData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setMessages(messageData);
+        const qWithPlus = query(
+            collection(db, 'whatsappMessages'),
+            where('customer', '==', `+${conversation.phone}`),
+            orderBy('timestamp', 'asc')
+        );
+
+        let allMessages = [];
+
+        const unsubWithoutPlus = onSnapshot(qWithoutPlus, (snapshot) => {
+            const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // Merge with existing messages, avoid duplicates
+            allMessages = [...allMessages.filter(m => !messages.find(nm => nm.id === m.id)), ...messages];
+
+            // Sort by timestamp
+            allMessages.sort((a, b) => {
+                const aTime = new Date(a.timestamp).getTime();
+                const bTime = new Date(b.timestamp).getTime();
+                return aTime - bTime;
+            });
+
+            setMessages([...allMessages]);
             setTimeout(() => scrollToBottom(), 200);
         });
 
-        return () => unsub();
+        const unsubWithPlus = onSnapshot(qWithPlus, (snapshot) => {
+            const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // Merge with existing messages, avoid duplicates
+            allMessages = [...allMessages.filter(m => !messages.find(nm => nm.id === m.id)), ...messages];
+
+            // Sort by timestamp
+            allMessages.sort((a, b) => {
+                const aTime = new Date(a.timestamp).getTime();
+                const bTime = new Date(b.timestamp).getTime();
+                return aTime - bTime;
+            });
+
+            setMessages([...allMessages]);
+            setTimeout(() => scrollToBottom(), 200);
+        });
+
+        return () => {
+            unsubWithoutPlus();
+            unsubWithPlus();
+        };
     }, [conversation?.phone]);
 
     useEffect(() => {
