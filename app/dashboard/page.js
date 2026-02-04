@@ -35,7 +35,6 @@ export default function Dashboard() {
                 const data = change.doc.data();
                 const phone = data.customer;
                 if (!phone) return;
-
                 // Send browser notification for new inbound messages
                 if (change.type === 'added' && data.direction === 'inbound') {
                     if ('Notification' in window && Notification.permission === 'granted') {
