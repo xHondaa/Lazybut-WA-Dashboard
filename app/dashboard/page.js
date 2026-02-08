@@ -297,16 +297,17 @@ function MessageThread({ conversation }) {
     const getMessageContent = (msg) => {
         // Handle images
         if (msg.message_type === 'image') {
-            const imageUrl = msg.raw?.image?.url;
-            if (!imageUrl) return `📷 [Image - no URL found]`;
+            // Use permanent media_url if available
+            const imageUrl = msg.media_url;
 
-            const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
-            const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(imageUrl)}`;
+            if (!imageUrl) {
+                return `📷 [Image not available]`;
+            }
 
             return (
                 <div>
                     <img
-                        src={proxiedUrl}
+                        src={imageUrl}
                         alt="Received image"
                         className="rounded max-w-full"
                         onError={(e) => {
@@ -314,18 +315,20 @@ function MessageThread({ conversation }) {
                             e.target.nextSibling.style.display = 'block';
                         }}
                     />
-                    <div style={{display: 'none'}} className="text-sm text-gray-500">Image unavailable</div>
+                    <div style={{display: 'none'}} className="text-sm text-gray-500">
+                        Image unavailable
+                    </div>
                 </div>
             );
         }
 
         // Handle audio/voice
         if (msg.message_type === 'audio' || msg.message_type === 'voice') {
-            const audioUrl = msg.raw?.audio?.url || msg.raw?.voice?.url;
-            if (!audioUrl) return `🎤 [Voice message - no URL found]`;
+            const audioUrl = msg.media_url;
 
-            const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
-            const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(audioUrl)}`;
+            if (!audioUrl) {
+                return `🎤 [Voice message not available]`;
+            }
 
             return (
                 <div>
@@ -333,8 +336,8 @@ function MessageThread({ conversation }) {
                         🎤 <span className="text-xs">Voice message</span>
                     </div>
                     <audio controls className="max-w-full">
-                        <source src={proxiedUrl} type="audio/ogg" />
-                        <source src={proxiedUrl} type="audio/mpeg" />
+                        <source src={audioUrl} type="audio/ogg" />
+                        <source src={audioUrl} type="audio/mpeg" />
                     </audio>
                 </div>
             );
@@ -342,11 +345,11 @@ function MessageThread({ conversation }) {
 
         // Handle videos
         if (msg.message_type === 'video') {
-            const videoUrl = msg.raw?.video?.url;
-            if (!videoUrl) return `🎥 [Video - no URL found]`;
+            const videoUrl = msg.media_url;
 
-            const railwayUrl = process.env.NEXT_PUBLIC_RAILWAY_URL || 'https://wa-confirmation-automation-production.up.railway.app';
-            const proxiedUrl = `${railwayUrl}/api/proxyImage?url=${encodeURIComponent(videoUrl)}`;
+            if (!videoUrl) {
+                return `🎥 [Video not available]`;
+            }
 
             return (
                 <div>
@@ -354,8 +357,52 @@ function MessageThread({ conversation }) {
                         🎥 <span className="text-xs">Video</span>
                     </div>
                     <video controls className="rounded max-w-full" style={{ maxHeight: '400px' }}>
-                        <source src={proxiedUrl} type="video/mp4" />
+                        <source src={videoUrl} type="video/mp4" />
                     </video>
+                </div>
+            );
+        }
+
+        // Handle documents
+        if (msg.message_type === 'document') {
+            const docUrl = msg.media_url;
+            const filename = msg.media_filename?.split('/').pop() || 'document';
+
+            if (!docUrl) {
+                return `📄 [Document not available]`;
+            }
+
+            return (
+                <div className="flex items-center gap-2">
+                    📄
+                    <a
+                        href={docUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline text-sm"
+                    >
+                        {filename}
+                    </a>
+                </div>
+            );
+        }
+
+        // Handle stickers
+        if (msg.message_type === 'sticker') {
+            const stickerUrl = msg.media_url;
+
+            if (!stickerUrl) {
+                return `🎭 [Sticker not available]`;
+            }
+
+            return (
+                <div>
+                    <img
+                        src={stickerUrl}
+                        alt="Sticker"
+                        className="rounded"
+                        style={{ maxWidth: '150px', maxHeight: '150px' }}
+                    />
                 </div>
             );
         }
