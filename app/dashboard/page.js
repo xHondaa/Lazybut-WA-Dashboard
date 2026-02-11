@@ -223,6 +223,7 @@ function MessageThread({ conversation }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [sending, setSending] = useState(false);
+    const [sendingTemplate, setSendingTemplate] = useState(false); // New state
     const messagesEndRef = useRef(null);
 
     const scrollToBottom = () => {
@@ -425,6 +426,35 @@ function MessageThread({ conversation }) {
         return `[${msg.message_type || 'Unknown message type'}]`;
     };
 
+    const handleSendTemplate = async (templateName) => {
+        if (sendingTemplate) return;
+
+        setSendingTemplate(true);
+
+        try {
+            const response = await fetch('/api/send-template', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone: conversation.phone_e164,
+                    templateName: templateName,
+                    variables: {}, // No variables for missing_location
+                    order_number: conversation.orders[0]?.order_number || null
+                })
+            });
+
+            if (!response.ok) throw new Error('Failed to send template');
+
+            console.log('✅ Template sent successfully');
+        } catch (error) {
+            console.error('Error sending template:', error);
+            alert('Failed to send template. Try again.');
+        } finally {
+            setSendingTemplate(false);
+        }
+    };
+
+
     const handleSendMessage = async (e) => {
         e.preventDefault();
         if (!newMessage.trim() || sending) return;
@@ -461,6 +491,18 @@ function MessageThread({ conversation }) {
                 <div className="text-xs text-emerald-200 mt-1">
                     Orders: {conversation.orders.map(o => `#${o.order_number}`).join(', ')}
                 </div>
+            </div>
+
+            {/* Quick Templates Bar */}
+            <div className="p-3 bg-amber-50 border-b border-amber-200 flex gap-2 overflow-x-auto">
+                <button
+                    onClick={() => handleSendTemplate('missing_location')}
+                    disabled={sendingTemplate}
+                    className="px-3 py-1.5 text-sm bg-amber-500 text-white rounded hover:bg-amber-600 disabled:bg-gray-300 disabled:cursor-not-allowed whitespace-nowrap transition-colors"
+                >
+                    📍 Missing Address
+                </button>
+                {/* Add more template buttons here as needed */}
             </div>
 
             {/* Messages */}
