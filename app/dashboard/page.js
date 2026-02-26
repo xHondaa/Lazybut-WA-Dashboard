@@ -502,6 +502,13 @@ function MessageThread({ conversation }) {
                 >
                     📍 Missing Address
                 </button>
+                <button
+                    onClick={() => handleSendTemplate('order_reconfirm_en')}
+                    disabled={sendingTemplate}
+                    className="px-3 py-1.5 text-sm bg-amber-500 text-white rounded hover:bg-amber-600 disabled:bg-gray-300 disabled:cursor-not-allowed whitespace-nowrap transition-colors"
+                >
+                    Reconfirm 🔁
+                </button>
                 {/* Add more template buttons here as needed */}
             </div>
 
